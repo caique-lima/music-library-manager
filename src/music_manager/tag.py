@@ -1,9 +1,25 @@
+from pathlib import Path
+
 from mutagen.mp4 import MP4, MP4Cover
 
 from music_manager.cache import fetch_url
 from music_manager.track import Track
 
 COVER_ART_URL = "https://coverartarchive.org/recording/{recording_id}/front"
+
+
+def read_tags(path: Path) -> Track:
+    """Read existing MP4 tags from a file into a Track."""
+    audio = MP4(str(path))
+    return Track(
+        path=path,
+        title=audio.get("\xa9nam", [""])[0],
+        artist=audio.get("\xa9ART", [""])[0],
+        album=audio.get("\xa9alb", [""])[0],
+        year=str(audio.get("\xa9day", [""])[0])[:4],
+        genre=audio.get("\xa9gen", [""])[0],
+        track_number=audio.get("trkn", [(0, 0)])[0][0],
+    )
 
 
 def fetch_cover_art(musicbrainz_recording_id: str) -> bytes:

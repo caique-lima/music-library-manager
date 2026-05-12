@@ -7,7 +7,7 @@ import acoustid
 
 from .convert import wav_to_alac
 from .identify import identify
-from .tag import tag_track
+from .tag import tag_track, read_tags
 from .organize import move_track, delete_original_wav
 
 
@@ -103,17 +103,21 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
 
 
 def _fix_track(m4a: Path, api_key: str | None, library_root: Path) -> _TrackResult:
-    try:
-        track = identify(m4a, api_key)
-    except acoustid.WebServiceError as exc:
-        return _TrackResult(src=m4a, status="error", label=str(exc))
+    track = read_tags(m4a)
 
-    if not track.title:
-        return _TrackResult(src=m4a, status="skipped", label="no match found")
+    if not track.title or not track.album:
+        # Tags incomplete — re-identify
+        try:
+            track = identify(m4a, api_key)
+        except acoustid.WebServiceError as exc:
+            return _TrackResult(src=m4a, status="error", label=str(exc))
 
-    tag_track(track)
+        if not track.title:
+            return _TrackResult(src=m4a, status="skipped", label="no match found")
+
+        tag_track(track)
+
     dest = move_track(track, library_root=library_root)
-
     label = f"{track.artist} — {track.title} ({track.year})"
     return _TrackResult(src=m4a, status="ok", dest=dest, label=label)
 

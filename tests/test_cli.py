@@ -142,12 +142,31 @@ def test_fix_command_no_m4as(tmp_path):
     assert "No .m4a files found" in result.output
 
 
-def test_fix_track_ok(tmp_path):
+def test_fix_track_uses_existing_tags_when_complete(tmp_path):
     m4a = tmp_path / "track.m4a"
     m4a.touch()
+    complete = _fake_track(m4a)
     dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
 
     with (
+        patch("music_manager.cli.read_tags", return_value=complete),
+        patch("music_manager.cli.identify") as mock_identify,
+        patch("music_manager.cli.move_track", return_value=dest),
+    ):
+        result = _fix_track(m4a, FAKE_API_KEY, tmp_path)
+
+    mock_identify.assert_not_called()
+    assert result.status == "ok"
+
+
+def test_fix_track_reidentifies_when_tags_incomplete(tmp_path):
+    m4a = tmp_path / "track.m4a"
+    m4a.touch()
+    incomplete = Track(path=m4a, title="Paranoid Android")  # missing album
+    dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
+
+    with (
+        patch("music_manager.cli.read_tags", return_value=incomplete),
         patch("music_manager.cli.identify", return_value=_fake_track(m4a)),
         patch("music_manager.cli.tag_track"),
         patch("music_manager.cli.move_track", return_value=dest),
@@ -162,7 +181,10 @@ def test_fix_track_no_match(tmp_path):
     m4a = tmp_path / "track.m4a"
     m4a.touch()
 
-    with patch("music_manager.cli.identify", return_value=Track(path=m4a)):
+    with (
+        patch("music_manager.cli.read_tags", return_value=Track(path=m4a)),
+        patch("music_manager.cli.identify", return_value=Track(path=m4a)),
+    ):
         result = _fix_track(m4a, FAKE_API_KEY, tmp_path)
 
     assert result.status == "skipped"
