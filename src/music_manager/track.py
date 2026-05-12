@@ -11,5 +11,6 @@ class Track:
     title: str = ""
     track_number: int = 0
     genre: str = ""
+    album_artist: str = ""
     cover_art: bytes = field(default=b"", repr=False)
     musicbrainz_recording_id: str = ""

@@ -32,6 +32,18 @@ def test_destination_path_fully_populated(tmp_path):
     assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road (1969)" / "03 Something.m4a"
 
 
+def test_destination_path_uses_album_artist_for_folder(tmp_path):
+    track = make_track(tmp_path, artist="Dr. Dre, Charis Henry & Mel-Man", album_artist="Dr. Dre")
+    dest = destination_path(track, tmp_path / "lib")
+    assert dest.parts[-3] == "Dr. Dre"
+
+
+def test_destination_path_falls_back_to_artist_when_no_album_artist(tmp_path):
+    track = make_track(tmp_path, artist="Aphex Twin", album_artist="")
+    dest = destination_path(track, tmp_path / "lib")
+    assert dest.parts[-3] == "Aphex Twin"
+
+
 def test_destination_path_track_number_zero(tmp_path):
     track = make_track(tmp_path, track_number=0, title="Something")
     dest = destination_path(track, tmp_path / "lib")

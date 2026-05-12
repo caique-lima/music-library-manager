@@ -7,17 +7,17 @@ from music_manager.cache import fetch_url
 from music_manager.track import Track
 
 
-def _apple_music_track_number(apple_music_id: str) -> int:
-    """Look up track number via the iTunes API using the Apple Music track ID."""
+def _itunes_lookup(apple_music_id: str) -> dict:
+    """Return the first iTunes result dict for the given track ID, or {}."""
     import json
     raw = fetch_url(f"https://itunes.apple.com/lookup?id={apple_music_id}")
     if not raw:
-        return 0
+        return {}
     try:
         results = json.loads(raw).get("results", [])
-        return results[0].get("trackNumber", 0) if results else 0
+        return results[0] if results else {}
     except Exception:
-        return 0
+        return {}
 
 
 def _apple_music_id(track: dict) -> str:
@@ -46,7 +46,9 @@ def _parse(result: dict, path: Path) -> Track | None:
             year = entry.get("text", "")[:4]
 
     apple_id = _apple_music_id(track)
-    track_number = _apple_music_track_number(apple_id) if apple_id else 0
+    itunes = _itunes_lookup(apple_id) if apple_id else {}
+    track_number = itunes.get("trackNumber", 0)
+    album_artist = itunes.get("collectionArtistName", "")
 
     cover_url = track.get("images", {}).get("coverart", "")
     cover_art = fetch_url(cover_url) if cover_url else b""
@@ -59,6 +61,7 @@ def _parse(result: dict, path: Path) -> Track | None:
         year=year,
         genre=genre,
         track_number=track_number,
+        album_artist=album_artist,
         cover_art=cover_art,
     )
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from music_manager.shazam import identify_shazam, _parse, _apple_music_id, _apple_music_track_number
+from music_manager.shazam import identify_shazam, _parse, _apple_music_id, _itunes_lookup
 from music_manager import cache
 
 FAKE_PATH = Path("/tmp/fake.m4a")
@@ -42,20 +42,23 @@ def test_apple_music_id_returns_empty_when_missing():
     assert _apple_music_id({"hub": {"actions": [{"type": "uri"}]}}) == ""
 
 
-def test_apple_music_track_number_parses_response():
+def test_itunes_lookup_parses_response():
     import json
-    with patch("music_manager.shazam.fetch_url", return_value=json.dumps({"results": [{"trackNumber": 3}]}).encode()):
-        assert _apple_music_track_number("123") == 3
+    payload = json.dumps({"results": [{"trackNumber": 3, "collectionArtistName": "Dr. Dre"}]}).encode()
+    with patch("music_manager.shazam.fetch_url", return_value=payload):
+        result = _itunes_lookup("123")
+    assert result["trackNumber"] == 3
+    assert result["collectionArtistName"] == "Dr. Dre"
 
 
-def test_apple_music_track_number_returns_zero_on_failure():
+def test_itunes_lookup_returns_empty_on_failure():
     with patch("music_manager.shazam.fetch_url", return_value=b""):
-        assert _apple_music_track_number("123") == 0
+        assert _itunes_lookup("123") == {}
 
 
 def test_parse_populates_track():
     import json
-    itunes_payload = json.dumps({"results": [{"trackNumber": 1}]}).encode()
+    itunes_payload = json.dumps({"results": [{"trackNumber": 1, "collectionArtistName": "Aphex Twin"}]}).encode()
 
     def fake_fetch(url):
         if "itunes" in url:
@@ -68,6 +71,7 @@ def test_parse_populates_track():
     assert track is not None
     assert track.title == "Xtal"
     assert track.artist == "Aphex Twin"
+    assert track.album_artist == "Aphex Twin"
     assert track.album == "Selected Ambient Works 85-92"
     assert track.year == "1992"
     assert track.genre == "Electronic"

@@ -14,7 +14,8 @@ def destination_path(track: Track, library_root: Path) -> Path:
 
     Pattern: library_root / artist / "album (YEAR)" / "NN title.m4a"
     """
-    artist = _sanitize(track.artist) if track.artist.strip() else "Unknown Artist"
+    folder_artist = track.album_artist.strip() or track.artist.strip()
+    artist = _sanitize(folder_artist) if folder_artist else "Unknown Artist"
     album = _sanitize(track.album) if track.album.strip() else "Unknown Album"
     year = _sanitize(track.year)
 
