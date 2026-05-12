@@ -12,88 +12,89 @@ Stem generation is a separate on-demand command (uses Demucs, runs locally on Ap
 
 ## Commands
 
-Once the project is scaffolded (Phase 1):
-
 ```bash
 # Install dependencies
-uv sync --extra dev
+uv sync --extra dev          # includes pytest
+uv sync --extra stems        # adds demucs (large, optional)
 
 # Run the tool
 uv run music-manager process <input_dir>            # full pipeline: convert, tag, organize
 uv run music-manager process <input_dir> --dry-run  # preview moves without writing
-
 uv run music-manager stems <file_or_glob>           # generate stems for a specific track
 
 # Run tests
 uv run pytest
-
-# Run a single test
-uv run pytest tests/test_convert.py::test_wav_to_alac
+uv run pytest tests/test_convert.py::test_wav_to_alac_calls_ffmpeg  # single test
 ```
 
 ## Architecture
 
-### Pipeline (Phase 1–4)
+### Pipeline flow
 
 ```
-input_dir/
-  *.wav
+input_dir/*.wav
     │
-    ▼
-  ffmpeg        → convert WAV → ALAC (.m4a)
+    ▼ convert.py
+  ffmpeg → WAV → ALAC (.m4a), same directory
     │
-    ▼
-  pyacoustid    → acoustic fingerprint
-  MusicBrainz   → resolve artist / album / year / title / track#
+    ▼ identify.py
+  pyacoustid fingerprint → acoustid.match() → MusicBrainz API
+  returns Track dataclass (artist, album, year, title, track_number, mb_id)
     │
-    ▼
-  mutagen       → write MP4 tags + embed cover art (Cover Art Archive)
+    ▼ tag.py
+  Cover Art Archive fetch → mutagen MP4 tag write
     │
-    ▼
-  organize      → move to input_dir/artist/album (YEAR)/song_name.m4a
-                  delete original WAV
+    ▼ organize.py
+  move to library_root/artist/album (YEAR)/NN title.m4a
+  delete original WAV
 ```
 
-### Stem generation (Phase 5)
+Stem generation (Phase 5 — not yet implemented) will output to `input_dir/stems/artist/album (YEAR)/song_name/{vocals,drums,bass,other}.wav` as WAV for DAW use.
 
-```
-stems command
-    │
-    ▼
-  Demucs        → separates vocals / drums / bass / other
-    │
-    ▼
-  output        → input_dir/stems/artist/album (YEAR)/song_name/{vocals,drums,bass,other}.wav
+### Track dataclass (`track.py`)
+
+The shared data model passed between all pipeline stages:
+
+```python
+@dataclass
+class Track:
+    path: Path
+    artist: str
+    album: str
+    year: str           # 4-char string, e.g. "1997"
+    title: str
+    track_number: int   # 0 means unknown; omits numeric prefix in filename
+    genre: str
+    cover_art: bytes    # populated by tag.py, empty until then
+    musicbrainz_recording_id: str
 ```
 
-Stems stay as WAV — they are for DAW use, not the iPod.
+### Key behaviours to know
+
+- `identify.py` handles two response shapes from `acoustid.match()`: raw dicts (when `meta="recordings releasegroups"`) and the simpler tuple form. Both are parsed.
+- `organize.py` sanitizes path components (strips whitespace, replaces `/` with `-`). Falls back to `"Unknown Artist"` / `"Unknown Album"` for empty fields.
+- `tag.py` skips writing any tag whose field is empty/zero — never writes blank strings to the file.
+- `tag.py` fetches cover art from `coverartarchive.org/recording/{id}/front`; failure is silently ignored (best-effort).
+- MusicBrainz User-Agent is set inside `identify.py` before every call, as required by their API policy.
+- `cli.py` currently only wires up Phase 1 (conversion). Phases 2–4 modules are implemented but not yet connected in the `process` command.
 
 ### Key dependencies
 
 | Library | Role |
 |---|---|
 | `ffmpeg-python` | WAV → ALAC conversion |
-| `pyacoustid` + `chromaprint` | Audio fingerprinting |
+| `pyacoustid` + `musicbrainzngs` | Audio fingerprinting + MusicBrainz API |
 | `mutagen` | Reading/writing MP4 tags |
-| `requests` | MusicBrainz & Cover Art Archive API |
-| `demucs` | Stem separation (local, Apple Silicon) |
+| `requests` | Cover Art Archive HTTP fetch |
+| `demucs` | Stem separation (optional extra) |
 | `click` | CLI interface |
 
-### File format decision
+### File format
 
-**WAV → ALAC (.m4a)** — lossless (no quality loss from CD rips), solid metadata support via the M4A container, natively supported by iPod Classic. AAC 256kbps is the fallback if iPod storage becomes a constraint.
+**WAV → ALAC (.m4a)** — lossless (no quality loss from CD rips), solid metadata support via the M4A container, natively supported by iPod Classic. AAC 256kbps is the documented fallback if storage becomes a constraint.
 
-### MusicBrainz integration
+## What's next
 
-- Fingerprint with AcoustID first; fall back to manual prompt if no match
-- Must include a User-Agent header per MusicBrainz API policy
-- Configurable via a config file (MusicBrainz username, preferred stem model, etc.)
-
-## Planned phases
-
-1. Project skeleton + WAV → ALAC conversion
-2. AcoustID fingerprinting + MusicBrainz lookup
-3. Metadata tagging + cover art embedding
-4. File organization + original WAV cleanup
-5. Demucs stem generation command
-6. Polish: progress bars, logging, dry-run, config file
+- Wire `identify` → `tag` → `organize` into the `process` command in `cli.py` (needs AcoustID API key handling)
+- Phase 5: Demucs stem generation command
+- Phase 6: progress bars, logging, config file
