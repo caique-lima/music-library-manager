@@ -5,9 +5,9 @@ import musicbrainzngs
 
 from music_manager.track import Track
 
-_USER_AGENT_APP = "music-manager"
+_USER_AGENT_APP = "music-library-manager"
 _USER_AGENT_VERSION = "0.1"
-_USER_AGENT_CONTACT = "caique.flima@gmail.com"
+_USER_AGENT_CONTACT = "https://github.com/caique-lima/music-library-manager"
 
 
 def fingerprint(path: Path) -> str:

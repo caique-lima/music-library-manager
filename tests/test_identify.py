@@ -116,7 +116,7 @@ def test_lookup_musicbrainz_sets_useragent():
     ):
         lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
-    mock_ua.assert_called_once_with("music-manager", "0.1", "caique.flima@gmail.com")
+    mock_ua.assert_called_once_with("music-library-manager", "0.1", "https://github.com/caique-lima/music-library-manager")
 
 
 # ---------------------------------------------------------------------------
