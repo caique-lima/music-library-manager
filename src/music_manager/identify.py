@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 
 import acoustid
@@ -9,8 +8,6 @@ from music_manager.track import Track
 _USER_AGENT_APP = "music-manager"
 _USER_AGENT_VERSION = "0.1"
 _USER_AGENT_CONTACT = "caique.flima@gmail.com"
-
-_RETRY_DELAYS = [2, 5, 10]
 
 
 def fingerprint(path: Path) -> str:
@@ -84,22 +81,13 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
 
 
 def identify(path: Path, acoustid_api_key: str) -> Track:
-    """Identify a track by fingerprint, retrying on transient server errors.
+    """Identify a track by fingerprint.
 
-    Returns the best matching Track, or an empty Track on no match.
-    Raises acoustid.WebServiceError if all retries are exhausted.
+    Returns the best matching :class:`Track` from AcoustID/MusicBrainz, or an
+    empty ``Track`` (all fields blank) when no match is found — the caller is
+    responsible for handling the no-match case (e.g. prompting the user).
     """
-    last_exc: Exception | None = None
-    for delay in [0] + _RETRY_DELAYS:
-        if delay:
-            time.sleep(delay)
-        try:
-            result = lookup_musicbrainz(path, acoustid_api_key)
-            return result if result is not None else Track(path=path)
-        except acoustid.WebServiceError as exc:
-            # Only retry on 503 Service Unavailable
-            if "503" not in str(exc):
-                raise
-            last_exc = exc
-
-    raise last_exc
+    result = lookup_musicbrainz(path, acoustid_api_key)
+    if result is None:
+        return Track(path=path)
+    return result

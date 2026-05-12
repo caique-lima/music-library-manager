@@ -1,7 +1,6 @@
+import os
 import click
 from pathlib import Path
-
-import acoustid
 
 from .convert import convert_directory
 from .identify import identify
@@ -38,12 +37,7 @@ def process(input_dir: Path, dry_run: bool, api_key: str):
             ok += 1
             continue
 
-        try:
-            track = identify(alac_path, api_key)
-        except acoustid.WebServiceError as exc:
-            click.echo(f"    [!] AcoustID unavailable ({exc}) — file left untagged in place")
-            skipped += 1
-            continue
+        track = identify(alac_path, api_key)
 
         if not track.title:
             click.echo("    [!] no match found — file left untagged in place")
