@@ -26,6 +26,7 @@ def test_process_track_ok(tmp_path):
     wav = tmp_path / "track.wav"
     wav.touch()
     alac = tmp_path / "track.m4a"
+    alac.touch()
     dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
 
     with (
@@ -46,6 +47,7 @@ def test_process_track_no_match(tmp_path):
     wav = tmp_path / "track.wav"
     wav.touch()
     alac = tmp_path / "track.m4a"
+    alac.touch()
 
     with (
         patch("music_manager.cli.wav_to_alac"),

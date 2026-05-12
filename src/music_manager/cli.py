@@ -23,6 +23,9 @@ def _process_track(src_wav: Path, api_key: str | None, library_root: Path) -> _T
     alac_path = src_wav.with_suffix(".m4a")
     wav_to_alac(src_wav, alac_path)
 
+    if not alac_path.exists():
+        return _TrackResult(src=src_wav, status="error", label="conversion failed — .m4a not produced")
+
     try:
         track = identify(alac_path, api_key)
     except acoustid.WebServiceError as exc:
