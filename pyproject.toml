@@ -16,6 +16,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+shazam = [
+    "shazamio>=0.4",
+]
 stems = [
     "demucs>=4.0",
 ]

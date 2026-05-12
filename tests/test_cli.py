@@ -94,7 +94,7 @@ def test_process_concurrent(tmp_path):
     (tmp_path / "b.wav").touch()
     dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
 
-    def fake_process(wav, api_key, library_root):
+    def fake_process(wav, api_key, library_root, use_shazam=False):
         return _TrackResult(src=wav, status="ok", dest=dest, label="Radiohead — Paranoid Android (1997)")
 
     runner = CliRunner()
@@ -113,7 +113,7 @@ def test_fix_command_finds_m4as_recursively(tmp_path):
     m4a.touch()
     dest = tmp_path / "Artist" / "Album (2020)" / "01 Track.m4a"
 
-    def fake_fix(path, api_key, library_root):
+    def fake_fix(path, api_key, library_root, use_shazam=False):
         return _TrackResult(src=path, status="ok", dest=dest, label="Artist — Track (2020)")
 
     runner = CliRunner()
