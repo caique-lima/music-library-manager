@@ -38,50 +38,17 @@ FAKE_JPEG = b"\xff\xd8\xff" + b"\x00" * 10  # minimal fake JPEG bytes
 # ---------------------------------------------------------------------------
 
 class TestFetchCoverArt:
-    def test_returns_bytes_on_200(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.content = FAKE_JPEG
-
-        with patch("music_manager.tag.requests.get", return_value=mock_response) as mock_get:
+    def test_returns_bytes_on_success(self):
+        with patch("music_manager.tag.fetch_url", return_value=FAKE_JPEG) as mock_fetch:
             result = fetch_cover_art("some-recording-id")
-
-        mock_get.assert_called_once_with(
-            "https://coverartarchive.org/recording/some-recording-id/front",
-            timeout=10,
+        mock_fetch.assert_called_once_with(
+            "https://coverartarchive.org/recording/some-recording-id/front"
         )
         assert result == FAKE_JPEG
 
-    def test_returns_empty_bytes_on_404(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-
-        with patch("music_manager.tag.requests.get", return_value=mock_response):
-            result = fetch_cover_art("missing-id")
-
-        assert result == b""
-
-    def test_returns_empty_bytes_on_500(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-
-        with patch("music_manager.tag.requests.get", return_value=mock_response):
-            result = fetch_cover_art("error-id")
-
-        assert result == b""
-
-    def test_returns_empty_bytes_on_exception(self):
-        with patch("music_manager.tag.requests.get", side_effect=Exception("network error")):
-            result = fetch_cover_art("boom-id")
-
-        assert result == b""
-
-    def test_returns_empty_bytes_on_timeout(self):
-        import requests as req_lib
-        with patch("music_manager.tag.requests.get", side_effect=req_lib.Timeout):
-            result = fetch_cover_art("timeout-id")
-
-        assert result == b""
+    def test_returns_empty_bytes_on_failure(self):
+        with patch("music_manager.tag.fetch_url", return_value=b""):
+            assert fetch_cover_art("missing-id") == b""
 
 
 # ---------------------------------------------------------------------------

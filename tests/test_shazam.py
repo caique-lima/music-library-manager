@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from music_manager.shazam import identify_shazam, _parse, _apple_music_id, _apple_music_track_number
+from music_manager import cache
 
 FAKE_PATH = Path("/tmp/fake.m4a")
 
@@ -42,25 +43,26 @@ def test_apple_music_id_returns_empty_when_missing():
 
 
 def test_apple_music_track_number_parses_response():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {"results": [{"trackNumber": 3}]}
-
-    with patch("music_manager.shazam.requests.get", return_value=mock_resp):
+    import json
+    with patch("music_manager.shazam.fetch_url", return_value=json.dumps({"results": [{"trackNumber": 3}]}).encode()):
         assert _apple_music_track_number("123") == 3
 
 
 def test_apple_music_track_number_returns_zero_on_failure():
-    with patch("music_manager.shazam.requests.get", side_effect=Exception("timeout")):
+    with patch("music_manager.shazam.fetch_url", return_value=b""):
         assert _apple_music_track_number("123") == 0
 
 
 def test_parse_populates_track():
-    mock_itunes = MagicMock()
-    mock_itunes.status_code = 200
-    mock_itunes.json.return_value = {"results": [{"trackNumber": 1}]}
+    import json
+    itunes_payload = json.dumps({"results": [{"trackNumber": 1}]}).encode()
 
-    with patch("music_manager.shazam.requests.get", return_value=mock_itunes):
+    def fake_fetch(url):
+        if "itunes" in url:
+            return itunes_payload
+        return b"fake-image-bytes"
+
+    with patch("music_manager.shazam.fetch_url", side_effect=fake_fetch):
         track = _parse(MOCK_RESPONSE, FAKE_PATH)
 
     assert track is not None
@@ -79,20 +81,14 @@ def test_parse_returns_none_on_no_match():
 
 
 def test_parse_fetches_cover_art():
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.content = b"fake-image-bytes"
-
-    with patch("music_manager.shazam.requests.get", return_value=mock_resp):
+    with patch("music_manager.shazam.fetch_url", return_value=b"fake-image-bytes"):
         track = _parse(MOCK_RESPONSE, FAKE_PATH)
-
     assert track.cover_art == b"fake-image-bytes"
 
 
 def test_parse_skips_cover_art_on_failure():
-    with patch("music_manager.shazam.requests.get", side_effect=Exception("timeout")):
+    with patch("music_manager.shazam.fetch_url", return_value=b""):
         track = _parse(MOCK_RESPONSE, FAKE_PATH)
-
     assert track.cover_art == b""
 
 
@@ -115,9 +111,7 @@ def test_identify_shazam_returns_track(tmp_path):
     fake_file.touch()
 
     with patch("music_manager.shazam.asyncio.run", return_value=MOCK_RESPONSE):
-        with patch("music_manager.shazam.requests.get") as mock_get:
-            mock_get.return_value.status_code = 200
-            mock_get.return_value.content = b"img"
+        with patch("music_manager.shazam.fetch_url", return_value=b"img"):
             track = identify_shazam(fake_file)
 
     assert track is not None

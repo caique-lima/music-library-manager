@@ -1,26 +1,23 @@
 import asyncio
 from pathlib import Path
 
-import requests
 from shazamio import Shazam
 
+from music_manager.cache import fetch_url
 from music_manager.track import Track
 
 
 def _apple_music_track_number(apple_music_id: str) -> int:
     """Look up track number via the iTunes API using the Apple Music track ID."""
+    import json
+    raw = fetch_url(f"https://itunes.apple.com/lookup?id={apple_music_id}")
+    if not raw:
+        return 0
     try:
-        resp = requests.get(
-            f"https://itunes.apple.com/lookup?id={apple_music_id}",
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            results = resp.json().get("results", [])
-            if results:
-                return results[0].get("trackNumber", 0)
+        results = json.loads(raw).get("results", [])
+        return results[0].get("trackNumber", 0) if results else 0
     except Exception:
-        pass
-    return 0
+        return 0
 
 
 def _apple_music_id(track: dict) -> str:
@@ -51,15 +48,8 @@ def _parse(result: dict, path: Path) -> Track | None:
     apple_id = _apple_music_id(track)
     track_number = _apple_music_track_number(apple_id) if apple_id else 0
 
-    cover_art = b""
     cover_url = track.get("images", {}).get("coverart", "")
-    if cover_url:
-        try:
-            resp = requests.get(cover_url, timeout=10)
-            if resp.status_code == 200:
-                cover_art = resp.content
-        except Exception:
-            pass
+    cover_art = fetch_url(cover_url) if cover_url else b""
 
     return Track(
         path=path,

@@ -1,24 +1,13 @@
-import requests
 from mutagen.mp4 import MP4, MP4Cover
 
+from music_manager.cache import fetch_url
 from music_manager.track import Track
 
 COVER_ART_URL = "https://coverartarchive.org/recording/{recording_id}/front"
 
 
 def fetch_cover_art(musicbrainz_recording_id: str) -> bytes:
-    """Fetch cover art from the MusicBrainz Cover Art Archive.
-
-    Returns image bytes on success, b"" on failure.
-    """
-    url = COVER_ART_URL.format(recording_id=musicbrainz_recording_id)
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return response.content
-        return b""
-    except Exception:
-        return b""
+    return fetch_url(COVER_ART_URL.format(recording_id=musicbrainz_recording_id))
 
 
 def write_tags(track: Track) -> None:
