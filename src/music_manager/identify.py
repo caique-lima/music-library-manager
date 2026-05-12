@@ -27,7 +27,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     musicbrainzngs.set_useragent(_USER_AGENT_APP, _USER_AGENT_VERSION, _USER_AGENT_CONTACT)
 
     results = list(
-        acoustid.match(acoustid_api_key, str(path), meta="recordings releasegroups")
+        acoustid.match(acoustid_api_key, str(path), meta="recordings releases releasegroups tracks")
     )
 
     if not results:

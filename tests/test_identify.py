@@ -15,7 +15,7 @@ FAKE_PATH = Path("/tmp/fake_song.m4a")
 FAKE_API_KEY = "test-api-key"
 
 # A realistic nested AcoustID result dict (as produced when
-# meta="recordings releasegroups" is requested).
+# meta="recordings releases releasegroups tracks" is requested).
 MOCK_RESULT_DICT = {
     "id": "acoustid-result-id",
     "score": 0.95,
