@@ -104,6 +104,38 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
 
 @cli.command()
 @click.argument("target", type=click.Path(exists=True, path_type=Path))
-def stems(target: Path):
-    """Generate stems for a track or directory of tracks. (Phase 5 — coming soon)"""
-    click.echo("Stem generation not yet implemented.")
+@click.option("--dry-run", is_flag=True, help="Preview output paths without separating.")
+def stems(target: Path, dry_run: bool):
+    """Separate vocals, drums, bass, and other stems for TARGET (file or directory)."""
+    from .stems import separate_stems
+
+    if target.is_file():
+        files = [target]
+        output_root = target.parent
+    else:
+        files = sorted(p for p in target.rglob("*.m4a"))
+        if not files:
+            click.echo("No M4A files found.")
+            return
+        output_root = target
+
+    click.echo(
+        f"Separating stems for {len(files)} file(s)"
+        + (" (dry run)" if dry_run else "")
+        + "\n"
+    )
+
+    ok = errors = 0
+    for track_path in files:
+        try:
+            out_dir = separate_stems(track_path, output_root, dry_run=dry_run)
+            click.echo(f"  ✓  {track_path.name}\n     → {out_dir}")
+            ok += 1
+        except RuntimeError as exc:
+            click.echo(f"  ✗  {track_path.name}: {exc}")
+            errors += 1
+
+    parts = [f"{ok} separated"]
+    if errors:
+        parts.append(f"{errors} errors")
+    click.echo(f"\nDone: {', '.join(parts)}.")
