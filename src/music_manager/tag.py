@@ -19,6 +19,7 @@ def read_tags(path: Path) -> Track:
         year=str(audio.get("\xa9day", [""])[0])[:4],
         genre=audio.get("\xa9gen", [""])[0],
         track_number=audio.get("trkn", [(0, 0)])[0][0],
+        album_artist=audio.get("aART", [""])[0],
     )
 
 
@@ -42,6 +43,8 @@ def write_tags(track: Track) -> None:
         audio["\xa9gen"] = [track.genre]
     if track.track_number:
         audio["trkn"] = [(track.track_number, 0)]
+    if track.album_artist:
+        audio["aART"] = [track.album_artist]
     if track.cover_art:
         audio["covr"] = [MP4Cover(track.cover_art, imageformat=MP4Cover.FORMAT_JPEG)]
 

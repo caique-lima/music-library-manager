@@ -105,7 +105,7 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
 def _fix_track(m4a: Path, api_key: str | None, library_root: Path) -> _TrackResult:
     track = read_tags(m4a)
 
-    if not track.title or not track.album:
+    if not track.title or not track.artist:
         # Tags incomplete — re-identify
         try:
             track = identify(m4a, api_key)
