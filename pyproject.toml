@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "music-manager"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "ffmpeg-python>=0.2",
+    "mutagen>=1.47",
+    "pyacoustid>=1.3",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+stems = [
+    "demucs>=4.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+]
+
+[project.scripts]
+music-manager = "music_manager.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/music_manager"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
