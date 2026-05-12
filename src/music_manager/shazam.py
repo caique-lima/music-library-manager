@@ -66,11 +66,17 @@ def _parse(result: dict, path: Path) -> Track | None:
     )
 
 
+_SHAZAM_TIMEOUT = 30
+
+
 async def _recognize(path: Path) -> dict:
-    return await Shazam().recognize(str(path))
+    return await asyncio.wait_for(Shazam().recognize(str(path)), timeout=_SHAZAM_TIMEOUT)
 
 
 def identify_shazam(path: Path) -> Track | None:
-    """Identify a track via Shazam. Returns None if no match found."""
-    result = asyncio.run(_recognize(path))
+    """Identify a track via Shazam. Returns None on no match or timeout."""
+    try:
+        result = asyncio.run(_recognize(path))
+    except asyncio.TimeoutError:
+        return None
     return _parse(result, path)
