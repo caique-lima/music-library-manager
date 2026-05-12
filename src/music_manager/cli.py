@@ -76,6 +76,8 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
             pool.submit(_process_track, wav, api_key, input_dir): wav
             for wav in wavs
         }
+        failed_dir = input_dir / "failed_conversion"
+
         for future in as_completed(futures):
             result: _TrackResult = future.result()
             if result.status == "ok":
@@ -86,7 +88,10 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
                 click.echo(f"  –  {result.src.name}: {result.label}")
                 skipped += 1
             else:
-                click.echo(f"  ✗  {result.src.name}: {result.label}")
+                failed_dir.mkdir(exist_ok=True)
+                dest = failed_dir / result.src.name
+                result.src.rename(dest)
+                click.echo(f"  ✗  {result.src.name}: {result.label}\n     → failed_conversion/")
                 errors += 1
 
     parts = [f"{ok} organized"]

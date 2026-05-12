@@ -106,12 +106,14 @@ def test_process_concurrent(tmp_path):
 
 
 def test_process_reports_skipped_and_errors(tmp_path):
-    (tmp_path / "a.wav").touch()
-    (tmp_path / "b.wav").touch()
+    a = tmp_path / "a.wav"
+    b = tmp_path / "b.wav"
+    a.touch()
+    b.touch()
 
     results = [
-        _TrackResult(src=tmp_path / "a.wav", status="skipped", label="no match found"),
-        _TrackResult(src=tmp_path / "b.wav", status="error", label="503"),
+        _TrackResult(src=a, status="skipped", label="no match found"),
+        _TrackResult(src=b, status="error", label="503"),
     ]
 
     runner = CliRunner()
@@ -120,3 +122,5 @@ def test_process_reports_skipped_and_errors(tmp_path):
 
     assert "1 skipped" in result.output
     assert "1 errors" in result.output
+    assert (tmp_path / "failed_conversion" / "b.wav").exists()
+    assert not b.exists()
