@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from music_manager.track import Track
+from music_manager.identify import fingerprint, identify, lookup_musicbrainz
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -52,8 +53,6 @@ def test_fingerprint_calls_acoustid_fingerprint_file():
     fake_fp = b"AQAAAE..."
 
     with patch("music_manager.identify.acoustid.fingerprint_file", return_value=(240, fake_fp)) as mock_fp:
-        from music_manager.identify import fingerprint
-
         result = fingerprint(FAKE_PATH)
 
     mock_fp.assert_called_once_with(str(FAKE_PATH))
@@ -71,8 +70,6 @@ def test_lookup_musicbrainz_parses_response():
         patch("music_manager.identify.acoustid.match", return_value=iter([MOCK_RESULT_DICT])),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
     ):
-        from music_manager.identify import lookup_musicbrainz
-
         track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
     assert track is not None
@@ -93,8 +90,6 @@ def test_lookup_musicbrainz_returns_none_when_no_results():
         patch("music_manager.identify.acoustid.match", return_value=iter([])),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
     ):
-        from music_manager.identify import lookup_musicbrainz
-
         result = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
     assert result is None
@@ -108,8 +103,6 @@ def test_lookup_musicbrainz_returns_none_when_recordings_empty():
         patch("music_manager.identify.acoustid.match", return_value=iter([empty_recordings_result])),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
     ):
-        from music_manager.identify import lookup_musicbrainz
-
         result = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
     assert result is None
@@ -121,8 +114,6 @@ def test_lookup_musicbrainz_sets_useragent():
         patch("music_manager.identify.acoustid.match", return_value=iter([MOCK_RESULT_DICT])),
         patch("music_manager.identify.musicbrainzngs.set_useragent") as mock_ua,
     ):
-        from music_manager.identify import lookup_musicbrainz
-
         lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
     mock_ua.assert_called_once_with("music-manager", "0.1", "caique.flima@gmail.com")
@@ -146,8 +137,6 @@ def test_identify_returns_track_on_match():
     )
 
     with patch("music_manager.identify.lookup_musicbrainz", return_value=expected):
-        from music_manager.identify import identify
-
         result = identify(FAKE_PATH, FAKE_API_KEY)
 
     assert result == expected
@@ -156,8 +145,6 @@ def test_identify_returns_track_on_match():
 def test_identify_returns_empty_track_when_no_match():
     """identify() must return an empty Track (path only) when lookup_musicbrainz returns None."""
     with patch("music_manager.identify.lookup_musicbrainz", return_value=None):
-        from music_manager.identify import identify
-
         result = identify(FAKE_PATH, FAKE_API_KEY)
 
     assert result.path == FAKE_PATH
