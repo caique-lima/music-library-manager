@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CLI tool for managing a personal music library sourced from CD rips (WAV files from a Fiio DM13) and LP rips. Targets an iPod 6th/7th generation as the primary playback device.
 
-Core pipeline per track: convert WAV → ALAC → fingerprint → fetch metadata from MusicBrainz → tag → organize into folder structure → delete original WAV.
+Core pipeline per track: convert WAV → ALAC → identify → tag → organize into folder structure → delete original WAV.
 
-Stem generation is a separate on-demand command (uses Demucs, runs locally on Apple Silicon).
+Stem generation is a separate on-demand command (Phase 5 — not yet implemented).
 
 ## Commands
 
@@ -18,83 +18,96 @@ uv sync --extra dev          # includes pytest
 uv sync --extra stems        # adds demucs (large, optional)
 
 # Run the tool
-uv run music-manager process <input_dir>            # full pipeline: convert, tag, organize
-uv run music-manager process <input_dir> --dry-run  # preview moves without writing
-uv run music-manager stems <file_or_glob>           # generate stems for a specific track
+uv run music-manager process <input_dir>                        # full pipeline
+uv run music-manager process <input_dir> --dry-run             # preview only
+uv run music-manager process <input_dir> --workers 8           # more concurrency
+uv run music-manager process <input_dir> --api-key <key>       # prefer AcoustID over Shazam
+uv run music-manager stems <file>                              # stem generation (stub)
 
 # Run tests
 uv run pytest
-uv run pytest tests/test_convert.py::test_wav_to_alac_calls_ffmpeg  # single test
+uv run pytest tests/test_organize.py::test_destination_path_fully_populated  # single test
 ```
+
+`ACOUSTID_API_KEY` env var is the alternative to `--api-key`.
 
 ## Architecture
 
-### Pipeline flow
+### Per-track pipeline
 
 ```
 input_dir/*.wav
     │
-    ▼ convert.py
-  ffmpeg → WAV → ALAC (.m4a), same directory
+    ▼ convert.py       wav_to_alac()
+  ffmpeg → ALAC (.m4a), same directory
     │
-    ▼ identify.py
-  pyacoustid fingerprint → acoustid.match() → MusicBrainz API
-  returns Track dataclass (artist, album, year, title, track_number, mb_id)
+    ▼ identify.py      identify()
+  AcoustID (if key) → MusicBrainz   ← preferred, richer metadata
+  Shazam fallback   → iTunes API    ← used when AcoustID unavailable
+  returns populated Track dataclass
     │
-    ▼ tag.py
-  Cover Art Archive fetch → mutagen MP4 tag write
+    ▼ tag.py           tag_track()
+  fetch cover art (cached) → mutagen MP4 tag write
     │
-    ▼ organize.py
-  move to library_root/artist/album (YEAR)/NN title.m4a
+    ▼ organize.py      move_track() + delete_original_wav()
+  library_root / album_artist / album (YEAR) / NN title.m4a
   delete original WAV
 ```
 
-Stem generation (Phase 5 — not yet implemented) will output to `input_dir/stems/artist/album (YEAR)/song_name/{vocals,drums,bass,other}.wav` as WAV for DAW use.
+All tracks run concurrently via `ThreadPoolExecutor` in `cli.py`. Results are printed as each completes via `as_completed`.
 
 ### Track dataclass (`track.py`)
 
-The shared data model passed between all pipeline stages:
+Shared data model passed between all pipeline stages:
 
 ```python
 @dataclass
 class Track:
     path: Path
-    artist: str
+    artist: str          # full track artist (e.g. "Dr. Dre, Charis Henry & Mel-Man")
+    album_artist: str    # album-level artist used for folder (e.g. "Dr. Dre") — from iTunes collectionArtistName
     album: str
-    year: str           # 4-char string, e.g. "1997"
+    year: str            # 4-char string
     title: str
-    track_number: int   # 0 means unknown; omits numeric prefix in filename
+    track_number: int    # 0 = unknown; omits numeric prefix in filename
     genre: str
-    cover_art: bytes    # populated by tag.py, empty until then
+    cover_art: bytes     # populated during identification, empty until then
     musicbrainz_recording_id: str
 ```
 
-### Key behaviours to know
+`album_artist` is the key to grouping feat. tracks correctly — `organize.py` uses it for the folder, falling back to `artist` when empty.
 
-- `identify.py` handles two response shapes from `acoustid.match()`: raw dicts (when `meta="recordings releasegroups"`) and the simpler tuple form. Both are parsed.
-- `organize.py` sanitizes path components (strips whitespace, replaces `/` with `-`). Falls back to `"Unknown Artist"` / `"Unknown Album"` for empty fields.
-- `tag.py` skips writing any tag whose field is empty/zero — never writes blank strings to the file.
-- `tag.py` fetches cover art from `coverartarchive.org/recording/{id}/front`; failure is silently ignored (best-effort).
-- MusicBrainz User-Agent is set inside `identify.py` before every call, as required by their API policy.
-- `cli.py` currently only wires up Phase 1 (conversion). Phases 2–4 modules are implemented but not yet connected in the `process` command.
+### Identification strategy (`identify.py` + `shazam.py`)
+
+- `identify()` tries AcoustID first (if key provided), falls back to `identify_shazam()`
+- AcoustID path: `pyacoustid` fingerprints the file → MusicBrainz API for metadata
+- Shazam path: `shazamio` (async, called via `asyncio.run()` — safe across threads as each call creates its own event loop) → iTunes lookup API for track number and `collectionArtistName`
+
+### HTTP caching (`cache.py`)
+
+`fetch_url(url)` is an `lru_cache(maxsize=256)` wrapper around `requests.get`. Used by both `shazam.py` (cover art, iTunes lookup) and `tag.py` (MusicBrainz Cover Art Archive). Deduplicates fetches for the same URL across concurrent threads — critical for albums where all tracks share the same cover art URL.
+
+### Key behaviours
+
+- WAV glob is case-insensitive (handles `.WAV` from Fiio DM13 alongside `.wav`)
+- `organize.py` sanitizes path components: strips whitespace, replaces `/` with `-`
+- `tag.py` skips writing any tag whose field is empty/zero
+- Cover art from Shazam is fetched and embedded during identification, so `tag_track()` skips the MusicBrainz Cover Art Archive fetch when `cover_art` is already populated
+- `chromaprint` (`fpcalc` binary) must be installed separately: `brew install chromaprint`
 
 ### Key dependencies
 
 | Library | Role |
 |---|---|
 | `ffmpeg-python` | WAV → ALAC conversion |
-| `pyacoustid` + `musicbrainzngs` | Audio fingerprinting + MusicBrainz API |
-| `mutagen` | Reading/writing MP4 tags |
-| `requests` | Cover Art Archive HTTP fetch |
-| `demucs` | Stem separation (optional extra) |
-| `click` | CLI interface |
-
-### File format
-
-**WAV → ALAC (.m4a)** — lossless (no quality loss from CD rips), solid metadata support via the M4A container, natively supported by iPod Classic. AAC 256kbps is the documented fallback if storage becomes a constraint.
+| `pyacoustid` + `musicbrainzngs` | Fingerprinting + MusicBrainz API |
+| `shazamio` | Shazam recognition (async) |
+| `mutagen` | MP4 tag reading/writing |
+| `requests` | HTTP (cover art, iTunes, MusicBrainz) |
+| `demucs` | Stem separation (optional extra, not yet wired) |
+| `click` | CLI |
 
 ## What's next
 
-- Wire `identify` → `tag` → `organize` into the `process` command in `cli.py` (needs AcoustID API key handling)
-- Phase 5: Demucs stem generation command
-- Phase 6: progress bars, logging, config file
+- Phase 5: Demucs stem generation command — output to `input_dir/stems/album_artist/album (YEAR)/title/{vocals,drums,bass,other}.wav`
+- Phase 6: progress bars, config file (default workers, preferred model)
