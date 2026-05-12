@@ -20,7 +20,7 @@ def convert_directory(input_dir: Path, dry_run: bool = False) -> list[tuple[Path
     Find all WAV files in input_dir (non-recursive) and convert each to ALAC
     in the same directory. Returns list of (src, dest) pairs.
     """
-    wavs = sorted(input_dir.glob("*.wav"))
+    wavs = sorted({p for p in input_dir.iterdir() if p.suffix.lower() == ".wav"})
     if not wavs:
         return []
 
