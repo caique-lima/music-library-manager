@@ -16,8 +16,8 @@ def cli():
 @cli.command()
 @click.argument("input_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--dry-run", is_flag=True, help="Preview actions without writing anything.")
-@click.option("--api-key", envvar="ACOUSTID_API_KEY", required=True,
-              help="AcoustID API key. Can also be set via ACOUSTID_API_KEY env var.")
+@click.option("--api-key", envvar="ACOUSTID_API_KEY", default=None,
+              help="AcoustID API key (or set ACOUSTID_API_KEY). Falls back to Shazam if omitted.")
 def process(input_dir: Path, dry_run: bool, api_key: str):
     """Convert, tag, and organize all WAV files in INPUT_DIR."""
     click.echo(f"Processing: {input_dir}" + (" (dry run)" if dry_run else ""))

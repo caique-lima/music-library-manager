@@ -143,9 +143,10 @@ def test_identify_returns_track_on_match():
 
 
 def test_identify_returns_empty_track_when_no_match():
-    """identify() must return an empty Track (path only) when lookup_musicbrainz returns None."""
+    """identify() must return an empty Track when both AcoustID and Shazam find nothing."""
     with patch("music_manager.identify.lookup_musicbrainz", return_value=None):
-        result = identify(FAKE_PATH, FAKE_API_KEY)
+        with patch("music_manager.identify.identify_shazam", return_value=None):
+            result = identify(FAKE_PATH, FAKE_API_KEY)
 
     assert result.path == FAKE_PATH
     assert result.title == ""

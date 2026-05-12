@@ -4,6 +4,7 @@ import acoustid
 import musicbrainzngs
 
 from music_manager.track import Track
+from music_manager.shazam import identify_shazam
 
 _USER_AGENT_APP = "music-library-manager"
 _USER_AGENT_VERSION = "0.1"
@@ -80,14 +81,18 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     )
 
 
-def identify(path: Path, acoustid_api_key: str) -> Track:
-    """Identify a track by fingerprint.
+def identify(path: Path, acoustid_api_key: str | None = None) -> Track:
+    """Identify a track, trying AcoustID first then falling back to Shazam.
 
-    Returns the best matching :class:`Track` from AcoustID/MusicBrainz, or an
-    empty ``Track`` (all fields blank) when no match is found — the caller is
-    responsible for handling the no-match case (e.g. prompting the user).
+    Returns the best matching Track, or an empty Track if nothing matched.
     """
-    result = lookup_musicbrainz(path, acoustid_api_key)
-    if result is None:
-        return Track(path=path)
-    return result
+    if acoustid_api_key:
+        try:
+            result = lookup_musicbrainz(path, acoustid_api_key)
+            if result is not None:
+                return result
+        except acoustid.WebServiceError:
+            pass
+
+    shazam_result = identify_shazam(path)
+    return shazam_result if shazam_result is not None else Track(path=path)
