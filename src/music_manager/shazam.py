@@ -7,6 +7,30 @@ from shazamio import Shazam
 from music_manager.track import Track
 
 
+def _apple_music_track_number(apple_music_id: str) -> int:
+    """Look up track number via the iTunes API using the Apple Music track ID."""
+    try:
+        resp = requests.get(
+            f"https://itunes.apple.com/lookup?id={apple_music_id}",
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            results = resp.json().get("results", [])
+            if results:
+                return results[0].get("trackNumber", 0)
+    except Exception:
+        pass
+    return 0
+
+
+def _apple_music_id(track: dict) -> str:
+    """Extract the Apple Music track ID from a Shazam response track dict."""
+    for action in track.get("hub", {}).get("actions", []):
+        if action.get("type") == "applemusicplay":
+            return action.get("id", "")
+    return ""
+
+
 def _parse(result: dict, path: Path) -> Track | None:
     track = result.get("track")
     if not track:
@@ -23,6 +47,9 @@ def _parse(result: dict, path: Path) -> Track | None:
             album = entry.get("text", "")
         elif entry.get("title") == "Released":
             year = entry.get("text", "")[:4]
+
+    apple_id = _apple_music_id(track)
+    track_number = _apple_music_track_number(apple_id) if apple_id else 0
 
     cover_art = b""
     cover_url = track.get("images", {}).get("coverart", "")
@@ -41,6 +68,7 @@ def _parse(result: dict, path: Path) -> Track | None:
         album=album,
         year=year,
         genre=genre,
+        track_number=track_number,
         cover_art=cover_art,
     )
 

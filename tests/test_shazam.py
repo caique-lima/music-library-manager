@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from music_manager.shazam import identify_shazam, _parse
+from music_manager.shazam import identify_shazam, _parse, _apple_music_id, _apple_music_track_number
 
 FAKE_PATH = Path("/tmp/fake.m4a")
 
@@ -12,6 +12,12 @@ MOCK_RESPONSE = {
         "subtitle": "Aphex Twin",
         "genres": {"primary": "Electronic"},
         "images": {"coverart": "https://example.com/cover.jpg"},
+        "hub": {
+            "actions": [
+                {"name": "apple", "type": "applemusicplay", "id": "1668862649"},
+                {"name": "apple", "type": "uri", "uri": "https://audio-ssl.itunes.apple.com/..."},
+            ]
+        },
         "sections": [
             {
                 "type": "SONG",
@@ -26,14 +32,44 @@ MOCK_RESPONSE = {
 }
 
 
+def test_apple_music_id_extracts_id():
+    assert _apple_music_id(MOCK_RESPONSE["track"]) == "1668862649"
+
+
+def test_apple_music_id_returns_empty_when_missing():
+    assert _apple_music_id({}) == ""
+    assert _apple_music_id({"hub": {"actions": [{"type": "uri"}]}}) == ""
+
+
+def test_apple_music_track_number_parses_response():
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": [{"trackNumber": 3}]}
+
+    with patch("music_manager.shazam.requests.get", return_value=mock_resp):
+        assert _apple_music_track_number("123") == 3
+
+
+def test_apple_music_track_number_returns_zero_on_failure():
+    with patch("music_manager.shazam.requests.get", side_effect=Exception("timeout")):
+        assert _apple_music_track_number("123") == 0
+
+
 def test_parse_populates_track():
-    track = _parse(MOCK_RESPONSE, FAKE_PATH)
+    mock_itunes = MagicMock()
+    mock_itunes.status_code = 200
+    mock_itunes.json.return_value = {"results": [{"trackNumber": 1}]}
+
+    with patch("music_manager.shazam.requests.get", return_value=mock_itunes):
+        track = _parse(MOCK_RESPONSE, FAKE_PATH)
+
     assert track is not None
     assert track.title == "Xtal"
     assert track.artist == "Aphex Twin"
     assert track.album == "Selected Ambient Works 85-92"
     assert track.year == "1992"
     assert track.genre == "Electronic"
+    assert track.track_number == 1
     assert track.path == FAKE_PATH
 
 
