@@ -102,6 +102,69 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
     click.echo(f"\nDone: {', '.join(parts)}.")
 
 
+def _fix_track(m4a: Path, api_key: str | None, library_root: Path) -> _TrackResult:
+    try:
+        track = identify(m4a, api_key)
+    except acoustid.WebServiceError as exc:
+        return _TrackResult(src=m4a, status="error", label=str(exc))
+
+    if not track.title:
+        return _TrackResult(src=m4a, status="skipped", label="no match found")
+
+    tag_track(track)
+    dest = move_track(track, library_root=library_root)
+
+    label = f"{track.artist} — {track.title} ({track.year})"
+    return _TrackResult(src=m4a, status="ok", dest=dest, label=label)
+
+
+@cli.command()
+@click.argument("input_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--api-key", envvar="ACOUSTID_API_KEY", default=None,
+              help="AcoustID API key (or set ACOUSTID_API_KEY). Falls back to Shazam if omitted.")
+@click.option("--workers", default=4, show_default=True,
+              help="Number of tracks to process concurrently.")
+def fix(input_dir: Path, api_key: str | None, workers: int):
+    """Re-identify and re-tag existing .m4a files in INPUT_DIR (recursive)."""
+    excluded = {input_dir / "stems"}
+    m4as = sorted(
+        p for p in input_dir.rglob("*.m4a")
+        if not any(p.is_relative_to(ex) for ex in excluded)
+    )
+    if not m4as:
+        click.echo("No .m4a files found.")
+        return
+
+    click.echo(f"Fixing {len(m4as)} file(s) with {workers} worker(s)\n")
+
+    ok = skipped = errors = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_fix_track, m4a, api_key, input_dir): m4a
+            for m4a in m4as
+        }
+        for future in as_completed(futures):
+            result: _TrackResult = future.result()
+            if result.status == "ok":
+                rel = result.dest.relative_to(input_dir)
+                click.echo(f"  ✓  {result.label}\n     → {rel}")
+                ok += 1
+            elif result.status == "skipped":
+                click.echo(f"  –  {result.src.name}: {result.label}")
+                skipped += 1
+            else:
+                click.echo(f"  ✗  {result.src.name}: {result.label}")
+                errors += 1
+
+    parts = [f"{ok} fixed"]
+    if skipped:
+        parts.append(f"{skipped} skipped")
+    if errors:
+        parts.append(f"{errors} errors")
+    click.echo(f"\nDone: {', '.join(parts)}.")
+
+
 @cli.command()
 @click.argument("target", type=click.Path(exists=True, path_type=Path))
 def stems(target: Path):
