@@ -1,6 +1,10 @@
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pytest
+
+pytest.importorskip("shazamio", reason="shazamio not installed; install with: uv sync --extra shazam")
+
 from music_manager.shazam import identify_shazam, _parse, _apple_music_id, _itunes_lookup
 from music_manager import cache
 
