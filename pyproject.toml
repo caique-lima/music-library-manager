@@ -13,12 +13,10 @@ dependencies = [
     "pyacoustid>=1.3",
     "musicbrainzngs>=0.7",
     "requests>=2.32",
+    "shazamio>=0.4",
 ]
 
 [project.optional-dependencies]
-shazam = [
-    "shazamio>=0.4",
-]
 stems = [
     "demucs>=4.0",
 ]

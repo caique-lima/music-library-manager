@@ -937,6 +937,7 @@ dependencies = [
     { name = "mutagen" },
     { name = "pyacoustid" },
     { name = "requests" },
+    { name = "shazamio" },
 ]
 
 [package.optional-dependencies]
@@ -962,9 +963,9 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14" },
     { name = "requests", specifier = ">=2.32" },
-    { name = "shazamio", marker = "extra == 'shazam'", specifier = ">=0.4" },
+    { name = "shazamio", specifier = ">=0.4" },
 ]
-provides-extras = ["shazam", "stems", "dev"]
+provides-extras = ["stems", "dev"]
 
 [[package]]
 name = "musicbrainzngs"
