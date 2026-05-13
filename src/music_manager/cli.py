@@ -19,7 +19,7 @@ class _TrackResult:
     label: str = ""      # human-readable artist — title
 
 
-def _process_track(src_wav: Path, api_key: str | None, library_root: Path, use_shazam: bool = False) -> _TrackResult:
+def _process_track(src_wav: Path, api_key: str | None, library_root: Path) -> _TrackResult:
     alac_path = src_wav.with_suffix(".m4a")
     wav_to_alac(src_wav, alac_path)
 
@@ -27,7 +27,7 @@ def _process_track(src_wav: Path, api_key: str | None, library_root: Path, use_s
         return _TrackResult(src=src_wav, status="error", label="conversion failed — .m4a not produced")
 
     try:
-        track = identify(alac_path, api_key, use_shazam=use_shazam)
+        track = identify(alac_path, api_key)
     except acoustid.WebServiceError as exc:
         return _TrackResult(src=src_wav, status="error", label=str(exc))
 
@@ -54,9 +54,7 @@ def cli():
               help="AcoustID API key (or set ACOUSTID_API_KEY).")
 @click.option("--workers", default=4, show_default=True,
               help="Number of tracks to process concurrently.")
-@click.option("--shazam", is_flag=True,
-              help="Fall back to Shazam when AcoustID finds no match (slower — extracts audio).")
-def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int, shazam: bool):
+def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
     """Convert, tag, and organize all WAV files in INPUT_DIR."""
     wavs = sorted({p for p in input_dir.iterdir() if p.suffix.lower() == ".wav"})
     if not wavs:
@@ -75,7 +73,7 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int, s
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_process_track, wav, api_key, input_dir, shazam): wav
+            pool.submit(_process_track, wav, api_key, input_dir): wav
             for wav in wavs
         }
         failed_dir = input_dir / "failed_conversion"
@@ -104,13 +102,12 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int, s
     click.echo(f"\nDone: {', '.join(parts)}.")
 
 
-def _fix_track(m4a: Path, api_key: str | None, library_root: Path, use_shazam: bool = False) -> _TrackResult:
+def _fix_track(m4a: Path, api_key: str | None, library_root: Path) -> _TrackResult:
     track = read_tags(m4a)
 
     if not track.title or not track.artist:
-        # Tags incomplete — re-identify
         try:
-            track = identify(m4a, api_key, use_shazam=use_shazam)
+            track = identify(m4a, api_key)
         except acoustid.WebServiceError as exc:
             return _TrackResult(src=m4a, status="error", label=str(exc))
 
@@ -130,9 +127,7 @@ def _fix_track(m4a: Path, api_key: str | None, library_root: Path, use_shazam: b
               help="AcoustID API key (or set ACOUSTID_API_KEY).")
 @click.option("--workers", default=4, show_default=True,
               help="Number of tracks to process concurrently.")
-@click.option("--shazam", is_flag=True,
-              help="Fall back to Shazam when AcoustID finds no match (slower — extracts audio).")
-def fix(input_dir: Path, api_key: str | None, workers: int, shazam: bool):
+def fix(input_dir: Path, api_key: str | None, workers: int):
     """Re-identify and re-tag existing .m4a files in INPUT_DIR (recursive)."""
     excluded = {input_dir / "stems"}
     m4as = sorted(
@@ -149,7 +144,7 @@ def fix(input_dir: Path, api_key: str | None, workers: int, shazam: bool):
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_fix_track, m4a, api_key, input_dir, shazam): m4a
+            pool.submit(_fix_track, m4a, api_key, input_dir): m4a
             for m4a in m4as
         }
         for future in as_completed(futures):

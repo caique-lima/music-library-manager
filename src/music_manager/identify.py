@@ -248,12 +248,10 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     return _fetch_from_musicbrainz(mb_id, path)
 
 
-def identify(path: Path, acoustid_api_key: str | None = None, use_shazam: bool = False) -> Track:
-    """Identify a track, trying AcoustID first then optionally falling back to Shazam.
+def identify(path: Path, acoustid_api_key: str | None = None) -> Track:
+    """Identify a track via AcoustID + MusicBrainz.
 
     Returns the best matching Track, or an empty Track if nothing matched.
-    Pass ``use_shazam=True`` to enable the Shazam fallback (slower — requires
-    audio extraction for each file).
     """
     if acoustid_api_key:
         try:
@@ -263,11 +261,5 @@ def identify(path: Path, acoustid_api_key: str | None = None, use_shazam: bool =
                 return result
         except acoustid.WebServiceError:
             pass
-
-    if use_shazam:
-        from music_manager.shazam import identify_shazam  # noqa: PLC0415
-        shazam_result = identify_shazam(path)
-        if shazam_result is not None:
-            return shazam_result
 
     return Track(path=path)

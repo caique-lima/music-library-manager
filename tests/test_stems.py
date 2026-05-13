@@ -145,7 +145,6 @@ class TestSeparateStems:
 class TestStemsCli:
     @pytest.fixture(autouse=True)
     def _cli(self):
-        pytest.importorskip("shazamio")
         from music_manager.cli import cli as _cli
         self.cli = _cli
 

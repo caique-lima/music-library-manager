@@ -1,8 +1,7 @@
 """Tests for music_manager.identify — no real network calls are made."""
 import json
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -585,50 +584,7 @@ def test_identify_returns_empty_track_when_no_match():
     assert result.cover_art == b""
 
 
-def _mock_shazam_module(return_value):
-    """Return a fake music_manager.shazam module with identify_shazam mocked."""
-    mod = MagicMock()
-    mod.identify_shazam.return_value = return_value
-    return mod
-
-
-def test_identify_skips_shazam_by_default():
-    # use_shazam=False (default): the lazy import never runs, result is empty.
-    with (
-        patch("music_manager.identify.lookup_musicbrainz", return_value=None),
-        patch("music_manager.identify._itunes_search_enrich"),
-    ):
-        result = identify(FAKE_PATH, FAKE_API_KEY)
-    assert result.title == ""
-
-
-def test_identify_calls_shazam_when_flag_set():
-    shazam_track = Track(path=FAKE_PATH, title="Found by Shazam", artist="Artist")
-    fake_mod = _mock_shazam_module(shazam_track)
-    with (
-        patch.dict(sys.modules, {"music_manager.shazam": fake_mod}),
-        patch("music_manager.identify.lookup_musicbrainz", return_value=None),
-        patch("music_manager.identify._itunes_search_enrich"),
-    ):
-        result = identify(FAKE_PATH, FAKE_API_KEY, use_shazam=True)
-    assert result.title == "Found by Shazam"
-    fake_mod.identify_shazam.assert_called_once_with(FAKE_PATH)
-
-
-def test_identify_shazam_not_called_when_acoustid_succeeds():
-    acoustid_track = Track(path=FAKE_PATH, title="Found by AcoustID", artist="Artist")
-    fake_mod = _mock_shazam_module(None)
-    with (
-        patch.dict(sys.modules, {"music_manager.shazam": fake_mod}),
-        patch("music_manager.identify.lookup_musicbrainz", return_value=acoustid_track),
-        patch("music_manager.identify._itunes_search_enrich"),
-    ):
-        result = identify(FAKE_PATH, FAKE_API_KEY, use_shazam=True)
-    fake_mod.identify_shazam.assert_not_called()
-    assert result.title == "Found by AcoustID"
-
-
-def test_identify_returns_empty_track_when_no_api_key_and_shazam_disabled():
+def test_identify_returns_empty_track_when_no_api_key():
     result = identify(FAKE_PATH)
     assert result.path == FAKE_PATH
     assert result.title == ""
