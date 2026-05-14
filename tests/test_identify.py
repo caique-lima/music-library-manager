@@ -390,11 +390,11 @@ def test_lookup_musicbrainz_tuple_form_picks_best_candidate():
         (0.99, "good-id", "Song", "Artist"),
     ]
     bad_data = (
-        {"id": "bad-id", "title": "Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}]},
+        {"id": "bad-id", "title": "Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}], "release-list": []},
         {"title": "Compilation DVD", "date": "2005", "artist-credit": [], "medium-list": [{"format": "DVD-Video"}]},
     )
     good_data = (
-        {"id": "good-id", "title": "Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}]},
+        {"id": "good-id", "title": "Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}], "release-list": []},
         {"title": "Original Album", "date": "1997", "artist-credit": [], "medium-list": [{"format": "CD"}]},
     )
     with (
@@ -407,6 +407,36 @@ def test_lookup_musicbrainz_tuple_form_picks_best_candidate():
     assert track is not None
     assert track.album == "Original Album"
     assert track.year == "1997"
+
+
+def test_lookup_musicbrainz_tuple_form_uses_release_count_as_tiebreaker():
+    """When format/VA scores tie, the candidate with more MusicBrainz releases wins."""
+    # Two candidates: same format/date quality, but different release counts.
+    # The newer song with more releases should beat the older song with fewer.
+    results = [
+        (0.99, "older-id", "Older Song", "Artist"),
+        (0.99, "newer-id", "Newer Song", "Artist"),
+    ]
+    older_data = (
+        {"id": "older-id", "title": "Older Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}],
+         "release-list": [{"id": "r1"}, {"id": "r2"}]},  # 2 releases
+        {"title": "Older Album", "date": "1992", "artist-credit": [], "medium-list": [{"format": "CD"}]},
+    )
+    newer_data = (
+        {"id": "newer-id", "title": "Newer Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}],
+         "release-list": [{"id": f"r{i}"} for i in range(25)]},  # 25 releases
+        {"title": "Newer Album", "date": "1998", "artist-credit": [], "medium-list": [{"format": "CD"}]},
+    )
+    with (
+        patch("music_manager.identify.acoustid.match", return_value=iter(results)),
+        patch("music_manager.identify.musicbrainzngs.set_useragent"),
+        patch("music_manager.identify._fetch_mb_data", side_effect=[older_data, newer_data]),
+    ):
+        track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
+
+    assert track is not None
+    assert track.title == "Newer Song"
+    assert track.album == "Newer Album"
 
 
 # ---------------------------------------------------------------------------

@@ -279,7 +279,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     # appear at index 4 while lower-indexed IDs resolve to compilations/DVDs.
     seen: set[str] = set()
     best_candidate: "tuple[str, dict, dict] | None" = None
-    best_candidate_score: tuple = (99,) * 4
+    best_candidate_score: tuple = (99, 99, 99, 0)
 
     for result in results:
         if len(seen) >= 6:
@@ -293,7 +293,14 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         if data is None:
             continue
         recording, release = data
-        score = _score_mb_release(release) if release else (99,) * 4
+        # Use only the first 3 elements of _score_mb_release (quality metrics)
+        # for inter-candidate comparison. Year is intentionally excluded: it is
+        # valid for choosing among releases of the same recording but wrongly
+        # rewards older songs over newer correct ones when comparing across
+        # different recordings. Tiebreak by release count — more MusicBrainz
+        # releases means a more canonical, well-known recording.
+        release_count = len(recording.get("release-list", []))
+        score = (_score_mb_release(release)[:3] + (-release_count,)) if release else (99, 99, 99, 0)
         if best_candidate is None or score < best_candidate_score:
             best_candidate_score = score
             best_candidate = (mb_id, recording, release)
