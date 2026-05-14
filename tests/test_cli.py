@@ -81,6 +81,19 @@ def test_process_no_wavs(tmp_path):
     assert "No WAV files found" in result.output
 
 
+def test_process_removes_duplicates(tmp_path):
+    a = tmp_path / "a.wav"
+    b = tmp_path / "b.wav"
+    a.write_bytes(b"same-content")
+    b.write_bytes(b"same-content")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["process", str(tmp_path), "--dry-run"])
+
+    assert "duplicate" in result.output
+    assert "b.wav" in result.output
+
+
 def test_process_dry_run(tmp_path):
     (tmp_path / "track.wav").touch()
     runner = CliRunner()
@@ -90,8 +103,8 @@ def test_process_dry_run(tmp_path):
 
 
 def test_process_concurrent(tmp_path):
-    (tmp_path / "a.wav").touch()
-    (tmp_path / "b.wav").touch()
+    (tmp_path / "a.wav").write_bytes(b"wav-a")
+    (tmp_path / "b.wav").write_bytes(b"wav-b")
     dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
 
     def fake_process(wav, api_key, library_root):
@@ -193,8 +206,8 @@ def test_fix_track_no_match(tmp_path):
 def test_process_reports_skipped_and_errors(tmp_path):
     a = tmp_path / "a.wav"
     b = tmp_path / "b.wav"
-    a.touch()
-    b.touch()
+    a.write_bytes(b"wav-a")
+    b.write_bytes(b"wav-b")
 
     results = [
         _TrackResult(src=a, status="skipped", label="no match found"),

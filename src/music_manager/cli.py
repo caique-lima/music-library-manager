@@ -1,4 +1,5 @@
 import click
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,25 @@ from .convert import wav_to_alac
 from .identify import identify
 from .tag import tag_track, read_tags
 from .organize import move_track, delete_original_wav
+
+
+def _dedup_wavs(wavs: list[Path]) -> tuple[list[Path], list[Path]]:
+    """Return (unique, duplicates). Keeps the first of each duplicate group (by sort order)."""
+    seen: dict[str, Path] = {}
+    unique: list[Path] = []
+    dupes: list[Path] = []
+    for wav in wavs:
+        digest = hashlib.md5()
+        with wav.open("rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                digest.update(chunk)
+        h = digest.hexdigest()
+        if h in seen:
+            dupes.append(wav)
+        else:
+            seen[h] = wav
+            unique.append(wav)
+    return unique, dupes
 
 
 @dataclass
@@ -60,6 +80,14 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
     if not wavs:
         click.echo("No WAV files found.")
         return
+
+    wavs, dupes = _dedup_wavs(wavs)
+    for dup in dupes:
+        if dry_run:
+            click.echo(f"  duplicate (would remove): {dup.name}")
+        else:
+            dup.unlink()
+            click.echo(f"  removed duplicate: {dup.name}")
 
     click.echo(f"Processing {len(wavs)} file(s) with {workers} worker(s)"
                + (" (dry run)" if dry_run else "") + "\n")
