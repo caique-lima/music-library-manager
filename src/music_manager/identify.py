@@ -271,15 +271,18 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
             musicbrainz_recording_id=mb_id,
         )
 
-    # Tuple form: (score, recording_id, title, artist) — try up to 3 unique
+    # Tuple form: (score, recording_id, title, artist) — try up to 6 unique
     # recording IDs and return the one whose best MusicBrainz release scores
     # lowest under _score_mb_release (prefers audio formats, non-VA, earlier dates).
+    # Using 6 rather than 3 because AcoustID often returns 5-6 distinct recording
+    # IDs with equal top scores; the canonical studio-album recording can easily
+    # appear at index 4 while lower-indexed IDs resolve to compilations/DVDs.
     seen: set[str] = set()
     best_candidate: "tuple[str, dict, dict] | None" = None
     best_candidate_score: tuple = (99,) * 4
 
     for result in results:
-        if len(seen) >= 3:
+        if len(seen) >= 6:
             break
         mb_id = result[1] if not isinstance(result, dict) else None
         if not mb_id or mb_id in seen:
