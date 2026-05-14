@@ -271,12 +271,34 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
             musicbrainz_recording_id=mb_id,
         )
 
-    # Tuple form: (score, recording_id, title, artist) — delegate to MusicBrainz
-    # for full metadata since the tuple carries no album/year/track info.
-    _score, mb_id = best[0], best[1]
-    if not mb_id:
+    # Tuple form: (score, recording_id, title, artist) — try up to 3 unique
+    # recording IDs and return the one whose best MusicBrainz release scores
+    # lowest under _score_mb_release (prefers audio formats, non-VA, earlier dates).
+    seen: set[str] = set()
+    best_candidate: "tuple[str, dict, dict] | None" = None
+    best_candidate_score: tuple = (99,) * 4
+
+    for result in results:
+        if len(seen) >= 3:
+            break
+        mb_id = result[1] if not isinstance(result, dict) else None
+        if not mb_id or mb_id in seen:
+            continue
+        seen.add(mb_id)
+
+        data = _fetch_mb_data(mb_id)
+        if data is None:
+            continue
+        recording, release = data
+        score = _score_mb_release(release) if release else (99,) * 4
+        if best_candidate is None or score < best_candidate_score:
+            best_candidate_score = score
+            best_candidate = (mb_id, recording, release)
+
+    if best_candidate is None:
         return None
-    return _fetch_from_musicbrainz(mb_id, path)
+    mb_id, recording, release = best_candidate
+    return _build_track_from_mb(mb_id, recording, release, path)
 
 
 def identify(path: Path, acoustid_api_key: str | None = None) -> Track:

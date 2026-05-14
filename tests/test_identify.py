@@ -362,22 +362,51 @@ def test_lookup_musicbrainz_sets_useragent():
     )
 
 
-def test_lookup_musicbrainz_tuple_form_delegates_to_mb():
-    """Tuple-form response should trigger a full MusicBrainz recording lookup."""
+def test_lookup_musicbrainz_tuple_form_fetches_mb_data():
+    """Tuple-form response should trigger a MusicBrainz data fetch."""
     tuple_result = (0.9, "mb-recording-uuid-1234", "Still D.R.E.", "Dr. Dre")
+    mb_data = (
+        {"id": "mb-recording-uuid-1234", "title": "Still D.R.E.", "artist-credit": [{"artist": {"name": "Dr. Dre"}, "joinphrase": ""}]},
+        {"title": "2001", "date": "1999", "artist-credit": [{"artist": {"name": "Dr. Dre"}, "joinphrase": ""}], "medium-list": []},
+    )
     with (
         patch("music_manager.identify.acoustid.match", return_value=iter([tuple_result])),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
-        patch(
-            "music_manager.identify._fetch_from_musicbrainz",
-            return_value=Track(path=FAKE_PATH, title="Still D.R.E.", artist="Dr. Dre feat. Snoop Dogg"),
-        ) as mock_fetch,
+        patch("music_manager.identify._fetch_mb_data", return_value=mb_data) as mock_fetch,
     ):
         track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
-    mock_fetch.assert_called_once_with("mb-recording-uuid-1234", FAKE_PATH)
+    mock_fetch.assert_called_once_with("mb-recording-uuid-1234")
     assert track is not None
-    assert track.artist == "Dr. Dre feat. Snoop Dogg"
+    assert track.title == "Still D.R.E."
+    assert track.artist == "Dr. Dre"
+
+
+def test_lookup_musicbrainz_tuple_form_picks_best_candidate():
+    """When multiple tuple results exist, the one with the better release wins."""
+    # Two candidates: first has a DVD release, second has a CD release.
+    results = [
+        (0.99, "bad-id",  "Song", "Artist"),
+        (0.99, "good-id", "Song", "Artist"),
+    ]
+    bad_data = (
+        {"id": "bad-id", "title": "Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}]},
+        {"title": "Compilation DVD", "date": "2005", "artist-credit": [], "medium-list": [{"format": "DVD-Video"}]},
+    )
+    good_data = (
+        {"id": "good-id", "title": "Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}]},
+        {"title": "Original Album", "date": "1997", "artist-credit": [], "medium-list": [{"format": "CD"}]},
+    )
+    with (
+        patch("music_manager.identify.acoustid.match", return_value=iter(results)),
+        patch("music_manager.identify.musicbrainzngs.set_useragent"),
+        patch("music_manager.identify._fetch_mb_data", side_effect=[bad_data, good_data]),
+    ):
+        track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
+
+    assert track is not None
+    assert track.album == "Original Album"
+    assert track.year == "1997"
 
 
 # ---------------------------------------------------------------------------
