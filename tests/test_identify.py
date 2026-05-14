@@ -8,7 +8,6 @@ import pytest
 from music_manager.track import Track
 from music_manager.identify import (
     _best_release,
-    _derive_album_artist,
     _fetch_from_musicbrainz,
     _itunes_search_enrich,
     _join_artists,
@@ -68,6 +67,10 @@ MOCK_MB_RECORDING = {
                 "id": "release-uuid",
                 "title": "2001",
                 "date": "1999-11-16",
+                # Release-level artist credit: album artist only, no feat.
+                "artist-credit": [
+                    {"artist": {"id": "dre-uuid", "name": "Dr. Dre"}, "joinphrase": ""},
+                ],
                 "medium-list": [
                     {
                         "track-list": [{"position": "1"}]
@@ -133,35 +136,6 @@ def test_join_artists_empty():
 
 def test_join_artists_skips_blank_names():
     assert _join_artists([{"name": ""}, {"name": "Radiohead"}]) == "Radiohead"
-
-
-# ---------------------------------------------------------------------------
-# _derive_album_artist
-# ---------------------------------------------------------------------------
-
-
-def test_derive_album_artist_feat_dot():
-    assert _derive_album_artist("Dr. Dre feat. Eminem") == "Dr. Dre"
-
-
-def test_derive_album_artist_feat_no_dot():
-    assert _derive_album_artist("Jay-Z feat Kanye") == "Jay-Z"
-
-
-def test_derive_album_artist_ft_dot():
-    assert _derive_album_artist("Tyler ft. Frank Ocean") == "Tyler"
-
-
-def test_derive_album_artist_featuring():
-    assert _derive_album_artist("Drake featuring 21 Savage") == "Drake"
-
-
-def test_derive_album_artist_solo_returns_empty():
-    assert _derive_album_artist("Radiohead") == ""
-
-
-def test_derive_album_artist_preserves_case():
-    assert _derive_album_artist("Dr. Dre feat. Eminem") == "Dr. Dre"
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +234,23 @@ def test_lookup_musicbrainz_joins_multiple_artists():
     assert track.artist == "Dr. Dre feat. Snoop Dogg"
 
 
-def test_lookup_musicbrainz_derives_album_artist_from_feat():
+def test_lookup_musicbrainz_uses_release_artist_not_feat():
+    """Release-level artists field (no feat.) takes priority over recording artists."""
     result_dict = {
         "recordings": [
             {
                 "id": "mb-id",
-                "title": "The Song",
-                "artists": [{"name": "Dr. Dre"}, {"name": "Eminem"}],
-                "releases": [],
+                "title": "Still D.R.E.",
+                "artists": [{"name": "Dr. Dre"}, {"name": "Snoop Dogg"}],
+                "releases": [
+                    {
+                        "title": "2001",
+                        "date": "1999",
+                        "artists": [{"name": "Dr. Dre"}],
+                        "releasegroups": [{"type": "Album", "secondarytypes": []}],
+                        "mediums": [],
+                    }
+                ],
             }
         ]
     }
@@ -278,7 +261,8 @@ def test_lookup_musicbrainz_derives_album_artist_from_feat():
         track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
     assert track is not None
-    assert track.album_artist == "Dr. Dre"
+    assert track.artist == "Dr. Dre"
+    assert track.album_artist == ""
 
 
 def test_lookup_musicbrainz_album_artist_empty_for_solo():
@@ -401,24 +385,40 @@ def test_lookup_musicbrainz_tuple_form_delegates_to_mb():
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_from_musicbrainz_assembles_artist_credit():
+def test_fetch_from_musicbrainz_uses_release_artist():
+    """Release-level artist-credit (album artist, no feat.) is preferred."""
     with patch("music_manager.identify.musicbrainzngs.get_recording_by_id", return_value=MOCK_MB_RECORDING):
         track = _fetch_from_musicbrainz("mb-recording-uuid-1234", FAKE_PATH)
 
     assert track is not None
-    assert track.artist == "Dr. Dre feat. Snoop Dogg"
+    assert track.artist == "Dr. Dre"
+    assert track.album_artist == ""
     assert track.album == "2001"
     assert track.year == "1999"
     assert track.track_number == 1
     assert track.musicbrainz_recording_id == "mb-recording-uuid-1234"
 
 
-def test_fetch_from_musicbrainz_derives_album_artist():
-    with patch("music_manager.identify.musicbrainzngs.get_recording_by_id", return_value=MOCK_MB_RECORDING):
-        track = _fetch_from_musicbrainz("mb-recording-uuid-1234", FAKE_PATH)
+def test_fetch_from_musicbrainz_falls_back_to_recording_artist_when_no_release_credit():
+    """When no release-level artist-credit exists, fall back to recording's artist-credit."""
+    mb_result = {
+        "recording": {
+            "id": "id",
+            "title": "Song",
+            "artist-credit": [
+                {"artist": {"name": "Dr. Dre"}, "joinphrase": " feat. "},
+                {"artist": {"name": "Eminem"}, "joinphrase": ""},
+            ],
+            "release-list": [
+                {"id": "r1", "title": "Album", "date": "2001", "medium-list": []},
+            ],
+        }
+    }
+    with patch("music_manager.identify.musicbrainzngs.get_recording_by_id", return_value=mb_result):
+        track = _fetch_from_musicbrainz("id", FAKE_PATH)
 
     assert track is not None
-    assert track.album_artist == "Dr. Dre"
+    assert track.artist == "Dr. Dre feat. Eminem"
 
 
 def test_fetch_from_musicbrainz_returns_none_on_error():

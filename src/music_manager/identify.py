@@ -31,20 +31,6 @@ def _join_artists(artists: list[dict]) -> str:
     return names[0] + " feat. " + " feat. ".join(names[1:])
 
 
-def _derive_album_artist(artist: str) -> str:
-    """Strip the feat. portion from artist to produce an album artist.
-
-    Returns '' for solo artists (no feat. separator detected); organize.py
-    then falls back to the full artist field.
-    """
-    lower = artist.lower()
-    for sep in (" feat. ", " feat ", " ft. ", " ft ", " featuring "):
-        idx = lower.find(sep)
-        if idx != -1:
-            return artist[:idx].strip()
-    return ""
-
-
 # Release-type preference for AcoustID response format (lower score = preferred).
 _RELEASE_TYPE_SCORE = {"Album": 0, "Single": 1, "EP": 1, "": 2, "Broadcast": 3, "Other": 3}
 
@@ -70,40 +56,67 @@ def _best_release(releases: list) -> dict:
     return min(releases, key=_score_release)
 
 
-def _fetch_from_musicbrainz(mb_id: str, path: Path) -> "Track | None":
-    """Full MusicBrainz recording lookup by ID.
+# MusicBrainz medium formats that are audio-only (lower score = preferred).
+_MB_FORMAT_SCORE = {
+    "CD": 0, "Vinyl": 0, "12\" Vinyl": 0, "7\" Vinyl": 0, "10\" Vinyl": 0,
+    "Digital Media": 0, "Cassette": 1,
+    "DVD": 5, "DVD-Video": 5, "Blu-ray": 5, "VHS": 5,
+}
 
-    Used when AcoustID returns the simplified tuple form, which lacks album,
-    year, track number, and full artist credits.
-    """
+
+def _score_mb_release(release: dict) -> tuple:
+    """Sort key for a MusicBrainz release dict: prefer audio formats, non-VA, earlier dates."""
+    medium_list = release.get("medium-list", [])
+    fmt = medium_list[0].get("format", "") if medium_list else ""
+    format_score = _MB_FORMAT_SCORE.get(fmt, 0)
+
+    artist_credit = release.get("artist-credit", [])
+    va_penalty = 5 if any(
+        isinstance(e, dict) and e.get("artist", {}).get("name") == "Various Artists"
+        for e in artist_credit
+    ) else 0
+
+    has_no_date = 0 if release.get("date") else 1
+    date = release.get("date", "")
+    year = int(date[:4]) if date and date[:4].isdigit() else 9999
+
+    return (va_penalty, format_score, has_no_date, year)
+
+
+def _best_mb_release(release_list: list) -> dict:
+    """Return the preferred release from a MusicBrainz release-list."""
+    if not release_list:
+        return {}
+    return min(release_list, key=_score_mb_release)
+
+
+def _fetch_mb_data(mb_id: str) -> "tuple[dict, dict] | None":
+    """Fetch a MusicBrainz recording and its best release. Returns (recording, release) or None."""
     try:
         result = musicbrainzngs.get_recording_by_id(
             mb_id,
-            includes=["artists", "releases", "media"],
+            includes=["artists", "releases", "media", "artist-credits"],
         )
     except musicbrainzngs.WebServiceError:
         return None
-
     recording = result.get("recording", {})
+    if not recording:
+        return None
+    release = _best_mb_release(recording.get("release-list", []))
+    return recording, release
+
+
+def _build_track_from_mb(mb_id: str, recording: dict, release: dict, path: Path) -> Track:
+    """Build a Track from a MusicBrainz recording and its chosen release."""
     title = recording.get("title", "")
 
-    # Assemble full credited artist string with join phrases.
-    artist_credit = recording.get("artist-credit", [])
-    if artist_credit:
-        artist = "".join(
-            entry["artist"]["name"] + entry.get("joinphrase", "")
-            for entry in artist_credit
-            if isinstance(entry, dict) and "artist" in entry
-        ).strip()
-    else:
-        artist = ""
-
-    # Prefer a release that has a date; fall back to first in list.
-    release_list = recording.get("release-list", [])
-    release = next(
-        (r for r in release_list if r.get("date")),
-        release_list[0] if release_list else {},
-    )
+    # Use release-level artist credit (album artist, no feat. credits).
+    # Fall back to recording-level if the release has none.
+    artist_credit = release.get("artist-credit") or recording.get("artist-credit", [])
+    artist = _normalize_feat(_join_artists([
+        e["artist"] for e in artist_credit
+        if isinstance(e, dict) and "artist" in e
+    ]))
 
     album = release.get("title", "")
     year = (release.get("date") or "")[:4]
@@ -116,19 +129,29 @@ def _fetch_from_musicbrainz(mb_id: str, path: Path) -> "Track | None":
             pos = track_list[0].get("position", "0")
             track_number = int(pos) if str(pos).isdigit() else 0
 
-    artist = _normalize_feat(artist)
-    album_artist = _normalize_feat(_derive_album_artist(artist))
-
     return Track(
         path=path,
         artist=artist,
-        album_artist=album_artist,
+        album_artist="",
         album=album,
         year=year,
         title=title,
         track_number=track_number,
         musicbrainz_recording_id=mb_id,
     )
+
+
+def _fetch_from_musicbrainz(mb_id: str, path: Path) -> "Track | None":
+    """Full MusicBrainz recording lookup by ID.
+
+    Used when AcoustID returns the simplified tuple form, which lacks album,
+    year, track number, and full artist credits.
+    """
+    data = _fetch_mb_data(mb_id)
+    if data is None:
+        return None
+    recording, release = data
+    return _build_track_from_mb(mb_id, recording, release, path)
 
 
 _ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
@@ -212,11 +235,13 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         mb_id = recording.get("id", "")
         title = recording.get("title", "")
 
-        artists = recording.get("artists", [])
-        artist = _normalize_feat(_join_artists(artists))
-
         releases = recording.get("releases", [])
         release = _best_release(releases)
+
+        # Use release-level artists (album artist, no feat. credits).
+        # Fall back to recording-level if the release has none.
+        release_artists = release.get("artists") or recording.get("artists", [])
+        artist = _normalize_feat(_join_artists(release_artists))
 
         album = release.get("title", "")
         year = (release.get("date") or "")[:4]
@@ -227,7 +252,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         track_entry = tracks_on_medium[0] if tracks_on_medium else {}
         track_number = track_entry.get("position", 0)
 
-        album_artist = _normalize_feat(_derive_album_artist(artist))
+        album_artist = ""
 
         return Track(
             path=path,
