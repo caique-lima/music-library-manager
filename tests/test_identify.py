@@ -421,6 +421,31 @@ def test_fetch_from_musicbrainz_falls_back_to_recording_artist_when_no_release_c
     assert track.artist == "Dr. Dre feat. Eminem"
 
 
+def test_fetch_from_musicbrainz_falls_back_to_recording_artist_for_various_artists():
+    """When release artist is Various Artists, use recording-level artist-credit instead."""
+    mb_result = {
+        "recording": {
+            "id": "id",
+            "title": "Angel",
+            "artist-credit": [{"artist": {"name": "Massive Attack"}, "joinphrase": ""}],
+            "release-list": [
+                {
+                    "id": "r1",
+                    "title": "π: Music for the Motion Picture",
+                    "date": "1998-07-21",
+                    "artist-credit": [{"artist": {"name": "Various Artists"}, "joinphrase": ""}],
+                    "medium-list": [],
+                }
+            ],
+        }
+    }
+    with patch("music_manager.identify.musicbrainzngs.get_recording_by_id", return_value=mb_result):
+        track = _fetch_from_musicbrainz("id", FAKE_PATH)
+
+    assert track is not None
+    assert track.artist == "Massive Attack"
+
+
 def test_fetch_from_musicbrainz_returns_none_on_error():
     import musicbrainzngs as mb
     with patch(

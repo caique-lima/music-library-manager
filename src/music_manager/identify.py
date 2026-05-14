@@ -111,8 +111,14 @@ def _build_track_from_mb(mb_id: str, recording: dict, release: dict, path: Path)
     title = recording.get("title", "")
 
     # Use release-level artist credit (album artist, no feat. credits).
-    # Fall back to recording-level if the release has none.
-    artist_credit = release.get("artist-credit") or recording.get("artist-credit", [])
+    # Fall back to recording-level if the release has none or is a VA compilation.
+    release_credit = release.get("artist-credit", [])
+    is_va = any(
+        isinstance(e, dict) and e.get("artist", {}).get("name") == "Various Artists"
+        for e in release_credit
+    )
+    artist_credit = (release_credit if release_credit and not is_va
+                     else recording.get("artist-credit", []))
     artist = _normalize_feat(_join_artists([
         e["artist"] for e in artist_credit
         if isinstance(e, dict) and "artist" in e
