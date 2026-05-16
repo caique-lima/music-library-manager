@@ -1,10 +1,11 @@
 import click
 import hashlib
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
+from queue import Queue
+from threading import Lock  # used inside _ProgressDisplay
 
 import acoustid
 from rich.console import Console, Group
@@ -212,29 +213,25 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
     ok = skipped = errors = 0
     failed_dir = input_dir / "failed_conversion"
 
-    # Assign each future a fixed worker slot so the display shows stable rows.
-    slot_lock = Lock()
-    free_slots: list[int] = list(range(workers))
-    future_slot: dict[Future, int] = {}
+    slot_queue: Queue[int] = Queue()
+    for i in range(workers):
+        slot_queue.put(i)
+
+    def _run_process(wav: Path) -> _TrackResult:
+        slot = slot_queue.get()
+        cb = display.phase_callback(slot)
+        try:
+            return _process_track(wav, api_key, input_dir, cb)
+        finally:
+            cb("idle", "")
+            slot_queue.put(slot)
 
     with _ProgressDisplay(total=len(wavs), n_workers=workers) as display:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for wav in wavs:
-                with slot_lock:
-                    slot = free_slots.pop(0)
-                cb = display.phase_callback(slot)
-                future = pool.submit(_process_track, wav, api_key, input_dir, cb)
-                future_slot[future] = slot
+            futures = {pool.submit(_run_process, wav): wav for wav in wavs}
 
-            for future in as_completed(future_slot):
-                slot = future_slot[future]
+            for future in as_completed(futures):
                 result: _TrackResult = future.result()
-
-                # Release slot back and mark idle before recording result
-                with slot_lock:
-                    display.phase_callback(slot)("idle", "")
-                    free_slots.append(slot)
-
                 display.record_result(result, input_dir)
 
                 if result.status == "ok":
@@ -304,27 +301,26 @@ def fix(input_dir: Path, api_key: str | None, workers: int):
         return
 
     ok = skipped = errors = 0
-    slot_lock = Lock()
-    free_slots: list[int] = list(range(workers))
-    future_slot: dict[Future, int] = {}
+
+    slot_queue: Queue[int] = Queue()
+    for i in range(workers):
+        slot_queue.put(i)
+
+    def _run_fix(m4a: Path) -> _TrackResult:
+        slot = slot_queue.get()
+        cb = display.phase_callback(slot)
+        try:
+            return _fix_track(m4a, api_key, input_dir, cb)
+        finally:
+            cb("idle", "")
+            slot_queue.put(slot)
 
     with _ProgressDisplay(total=len(m4as), n_workers=workers) as display:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for m4a in m4as:
-                with slot_lock:
-                    slot = free_slots.pop(0)
-                cb = display.phase_callback(slot)
-                future = pool.submit(_fix_track, m4a, api_key, input_dir, cb)
-                future_slot[future] = slot
+            futures = {pool.submit(_run_fix, m4a): m4a for m4a in m4as}
 
-            for future in as_completed(future_slot):
-                slot = future_slot[future]
+            for future in as_completed(futures):
                 result: _TrackResult = future.result()
-
-                with slot_lock:
-                    display.phase_callback(slot)("idle", "")
-                    free_slots.append(slot)
-
                 display.record_result(result, input_dir)
 
                 if result.status == "ok":
