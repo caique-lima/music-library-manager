@@ -255,20 +255,32 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
     click.echo(f"\nDone: {', '.join(parts)}.")
 
 
-def _fix_track(m4a: Path, api_key: str | None, library_root: Path) -> _TrackResult:
+def _fix_track(
+    m4a: Path,
+    api_key: str | None,
+    library_root: Path,
+    on_phase: Callable[[str, str], None] | None = None,
+) -> _TrackResult:
+    def _phase(p: str) -> None:
+        if on_phase:
+            on_phase(p, m4a.name)
+
     track = read_tags(m4a)
 
     if not track.title or not track.artist:
+        _phase("identifying")
         try:
             track = identify(m4a, api_key)
-        except acoustid.WebServiceError as exc:
+        except (acoustid.WebServiceError, acoustid.FingerprintGenerationError) as exc:
             return _TrackResult(src=m4a, status="error", label=str(exc))
 
         if not track.title:
             return _TrackResult(src=m4a, status="skipped", label="no match found")
 
+        _phase("tagging")
         tag_track(track)
 
+    _phase("moving")
     dest = move_track(track, library_root=library_root)
     label = f"{track.artist} — {track.title} ({track.year})"
     return _TrackResult(src=m4a, status="ok", dest=dest, label=label)
@@ -291,27 +303,36 @@ def fix(input_dir: Path, api_key: str | None, workers: int):
         click.echo("No .m4a files found.")
         return
 
-    click.echo(f"Fixing {len(m4as)} file(s) with {workers} worker(s)\n")
-
     ok = skipped = errors = 0
+    slot_lock = Lock()
+    free_slots: list[int] = list(range(workers))
+    future_slot: dict[Future, int] = {}
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(_fix_track, m4a, api_key, input_dir): m4a
-            for m4a in m4as
-        }
-        for future in as_completed(futures):
-            result: _TrackResult = future.result()
-            if result.status == "ok":
-                rel = result.dest.relative_to(input_dir)
-                click.echo(f"  ✓  {result.label}\n     → {rel}")
-                ok += 1
-            elif result.status == "skipped":
-                click.echo(f"  –  {result.src.name}: {result.label}")
-                skipped += 1
-            else:
-                click.echo(f"  ✗  {result.src.name}: {result.label}")
-                errors += 1
+    with _ProgressDisplay(total=len(m4as), n_workers=workers) as display:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for m4a in m4as:
+                with slot_lock:
+                    slot = free_slots.pop(0)
+                cb = display.phase_callback(slot)
+                future = pool.submit(_fix_track, m4a, api_key, input_dir, cb)
+                future_slot[future] = slot
+
+            for future in as_completed(future_slot):
+                slot = future_slot[future]
+                result: _TrackResult = future.result()
+
+                with slot_lock:
+                    display.phase_callback(slot)("idle", "")
+                    free_slots.append(slot)
+
+                display.record_result(result, input_dir)
+
+                if result.status == "ok":
+                    ok += 1
+                elif result.status == "skipped":
+                    skipped += 1
+                else:
+                    errors += 1
 
     parts = [f"{ok} fixed"]
     if skipped:

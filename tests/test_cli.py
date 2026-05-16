@@ -126,7 +126,7 @@ def test_fix_command_finds_m4as_recursively(tmp_path):
     m4a.touch()
     dest = tmp_path / "Artist" / "Album (2020)" / "01 Track.m4a"
 
-    def fake_fix(path, api_key, library_root):
+    def fake_fix(path, api_key, library_root, on_phase=None):
         return _TrackResult(src=path, status="ok", dest=dest, label="Artist — Track (2020)")
 
     runner = CliRunner()
