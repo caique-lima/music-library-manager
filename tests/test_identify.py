@@ -500,6 +500,7 @@ def test_itunes_search_enrich_noop_when_all_populated():
     track = Track(
         path=FAKE_PATH, title="Song", artist="Artist",
         genre="Rock", album="The Album", album_artist="Artist",
+        cover_art=b"\xff\xd8\xff",
     )
     with patch("music_manager.identify.fetch_url") as mock_fetch:
         _itunes_search_enrich(track)

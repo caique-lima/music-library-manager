@@ -14,3 +14,4 @@ class Track:
     album_artist: str = ""
     cover_art: bytes = field(default=b"", repr=False)
     musicbrainz_recording_id: str = ""
+    musicbrainz_release_id: str = ""
