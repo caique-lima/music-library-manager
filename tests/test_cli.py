@@ -107,7 +107,7 @@ def test_process_concurrent(tmp_path):
     (tmp_path / "b.wav").write_bytes(b"wav-b")
     dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
 
-    def fake_process(wav, api_key, library_root):
+    def fake_process(wav, api_key, library_root, on_phase=None):
         return _TrackResult(src=wav, status="ok", dest=dest, label="Radiohead — Paranoid Android (1997)")
 
     runner = CliRunner()

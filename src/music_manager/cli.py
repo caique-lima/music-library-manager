@@ -1,10 +1,18 @@
 import click
 import hashlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, Future, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 
 import acoustid
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+from rich.table import Table
+from rich.text import Text
 
 from .convert import wav_to_alac
 from .identify import identify
@@ -39,13 +47,112 @@ class _TrackResult:
     label: str = ""      # human-readable artist — title
 
 
-def _process_track(src_wav: Path, api_key: str | None, library_root: Path) -> _TrackResult:
+_PHASE_STYLE = {
+    "converting":   "cyan",
+    "identifying":  "yellow",
+    "tagging":      "magenta",
+    "moving":       "blue",
+    "idle":         "dim",
+}
+
+
+@dataclass
+class _ProgressDisplay:
+    """Owns the Rich Live display: overall progress, per-worker status, results log."""
+
+    total: int
+    n_workers: int
+    _lock: Lock = field(default_factory=Lock, init=False)
+    _phases: list[str] = field(init=False)       # slot → current phase
+    _files: list[str] = field(init=False)        # slot → current filename
+    _results: list[Text] = field(init=False)
+    _progress: Progress = field(init=False)
+    _overall_task: int = field(init=False)
+    _live: Live = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._phases = ["idle"] * self.n_workers
+        self._files = [""] * self.n_workers
+        self._results = []
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]Overall[/bold]"),
+            BarColumn(bar_width=36),
+            MofNCompleteColumn(),
+            transient=False,
+        )
+        self._overall_task = self._progress.add_task("overall", total=self.total)
+        self._live = Live(self._render(), refresh_per_second=10, console=Console(stderr=False))
+
+    def _render(self) -> Panel:
+        worker_table = Table.grid(padding=(0, 2))
+        for i, (phase, fname) in enumerate(zip(self._phases, self._files)):
+            style = _PHASE_STYLE.get(phase, "")
+            worker_table.add_row(
+                Text(f"Worker {i + 1}", style="bold"),
+                Text(phase, style=style),
+                Text(fname, style="dim"),
+            )
+
+        log_lines = Group(*self._results[-12:])  # show last 12 results
+        body = Group(self._progress, Text(""), worker_table, Text(""), log_lines)
+        return Panel(body, title="[bold]Music Library Manager[/bold]", border_style="bright_black")
+
+    def __enter__(self) -> "_ProgressDisplay":
+        self._live.__enter__()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self._live.__exit__(*args)
+
+    def phase_callback(self, slot: int) -> Callable[[str, str], None]:
+        """Return a callback for a worker slot: (phase, filename) → updates display."""
+        def _cb(phase: str, filename: str = "") -> None:
+            with self._lock:
+                self._phases[slot] = phase
+                self._files[slot] = filename
+                self._live.update(self._render())
+        return _cb
+
+    def record_result(self, result: "_TrackResult", input_dir: Path) -> None:
+        with self._lock:
+            if result.status == "ok":
+                rel = result.dest.relative_to(input_dir)
+                t = Text()
+                t.append("  ✓  ", style="green bold")
+                t.append(result.label)
+                t.append(f"\n     → {rel}", style="dim")
+            elif result.status == "skipped":
+                t = Text()
+                t.append("  –  ", style="yellow")
+                t.append(f"{result.src.name}: {result.label}", style="dim")
+            else:
+                t = Text()
+                t.append("  ✗  ", style="red bold")
+                t.append(f"{result.src.name}: {result.label}", style="dim")
+            self._results.append(t)
+            self._progress.advance(self._overall_task)
+            self._live.update(self._render())
+
+
+def _process_track(
+    src_wav: Path,
+    api_key: str | None,
+    library_root: Path,
+    on_phase: Callable[[str, str], None] | None = None,
+) -> _TrackResult:
+    def _phase(p: str) -> None:
+        if on_phase:
+            on_phase(p, src_wav.name)
+
+    _phase("converting")
     alac_path = src_wav.with_suffix(".m4a")
     wav_to_alac(src_wav, alac_path)
 
     if not alac_path.exists():
         return _TrackResult(src=src_wav, status="error", label="conversion failed — .m4a not produced")
 
+    _phase("identifying")
     try:
         track = identify(alac_path, api_key)
     except (acoustid.WebServiceError, acoustid.FingerprintGenerationError) as exc:
@@ -54,7 +161,10 @@ def _process_track(src_wav: Path, api_key: str | None, library_root: Path) -> _T
     if not track.title:
         return _TrackResult(src=src_wav, status="skipped", label="no match found")
 
+    _phase("tagging")
     tag_track(track)
+
+    _phase("moving")
     dest = move_track(track, library_root=library_root)
     delete_original_wav(src_wav)
 
@@ -89,38 +199,53 @@ def process(input_dir: Path, dry_run: bool, api_key: str | None, workers: int):
             dup.unlink()
             click.echo(f"  removed duplicate: {dup.name}")
 
-    click.echo(f"Processing {len(wavs)} file(s) with {workers} worker(s)"
-               + (" (dry run)" if dry_run else "") + "\n")
+    if not wavs:
+        click.echo("No unique WAV files to process.")
+        return
 
     if dry_run:
+        click.echo(f"Processing {len(wavs)} file(s) with {workers} worker(s) (dry run)\n")
         for wav in wavs:
             click.echo(f"  would process: {wav.name}")
         return
 
     ok = skipped = errors = 0
+    failed_dir = input_dir / "failed_conversion"
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(_process_track, wav, api_key, input_dir): wav
-            for wav in wavs
-        }
-        failed_dir = input_dir / "failed_conversion"
+    # Assign each future a fixed worker slot so the display shows stable rows.
+    slot_lock = Lock()
+    free_slots: list[int] = list(range(workers))
+    future_slot: dict[Future, int] = {}
 
-        for future in as_completed(futures):
-            result: _TrackResult = future.result()
-            if result.status == "ok":
-                rel = result.dest.relative_to(input_dir)
-                click.echo(f"  ✓  {result.label}\n     → {rel}")
-                ok += 1
-            elif result.status == "skipped":
-                click.echo(f"  –  {result.src.name}: {result.label}")
-                skipped += 1
-            else:
-                failed_dir.mkdir(exist_ok=True)
-                dest = failed_dir / result.src.name
-                result.src.rename(dest)
-                click.echo(f"  ✗  {result.src.name}: {result.label}\n     → failed_conversion/")
-                errors += 1
+    with _ProgressDisplay(total=len(wavs), n_workers=workers) as display:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for wav in wavs:
+                with slot_lock:
+                    slot = free_slots.pop(0)
+                cb = display.phase_callback(slot)
+                future = pool.submit(_process_track, wav, api_key, input_dir, cb)
+                future_slot[future] = slot
+
+            for future in as_completed(future_slot):
+                slot = future_slot[future]
+                result: _TrackResult = future.result()
+
+                # Release slot back and mark idle before recording result
+                with slot_lock:
+                    display.phase_callback(slot)("idle", "")
+                    free_slots.append(slot)
+
+                display.record_result(result, input_dir)
+
+                if result.status == "ok":
+                    ok += 1
+                elif result.status == "skipped":
+                    skipped += 1
+                else:
+                    failed_dir.mkdir(exist_ok=True)
+                    dest = failed_dir / result.src.name
+                    result.src.rename(dest)
+                    errors += 1
 
     parts = [f"{ok} organized"]
     if skipped:
