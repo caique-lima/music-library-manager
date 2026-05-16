@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 import acoustid
 import musicbrainzngs
+from mutagen import File as _MutagenFile
 
 from music_manager.track import Track
 from music_manager.cache import fetch_url
@@ -81,6 +82,26 @@ def _score_mb_release(release: dict) -> tuple:
     year = int(date[:4]) if date and date[:4].isdigit() else 9999
 
     return (va_penalty, format_score, has_no_date, year)
+
+
+def _duration_diff_s(path: Path, recording: dict) -> int:
+    """Return abs(file_duration - recording_duration) in whole seconds.
+
+    Returns 30 when either side has no duration data — a neutral penalty
+    that loses to any recording with a known, close duration match but
+    beats recordings whose durations are clearly wrong.
+    """
+    mb_ms = int(recording.get("length") or 0)
+    if not mb_ms:
+        return 30
+    try:
+        audio = _MutagenFile(str(path))
+        file_ms = int(audio.info.length * 1000) if audio and audio.info else 0
+    except Exception:
+        return 30
+    if not file_ms:
+        return 30
+    return abs(file_ms - mb_ms) // 1000
 
 
 def _best_mb_release(release_list: list) -> dict:
@@ -279,7 +300,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     # appear at index 4 while lower-indexed IDs resolve to compilations/DVDs.
     seen: set[str] = set()
     best_candidate: "tuple[str, dict, dict] | None" = None
-    best_candidate_score: tuple = (99, 99, 99, 0)
+    best_candidate_score: tuple = (99, 99, 99, 999, 0)
 
     for result in results:
         if len(seen) >= 6:
@@ -293,14 +314,13 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         if data is None:
             continue
         recording, release = data
-        # Use only the first 3 elements of _score_mb_release (quality metrics)
-        # for inter-candidate comparison. Year is intentionally excluded: it is
-        # valid for choosing among releases of the same recording but wrongly
-        # rewards older songs over newer correct ones when comparing across
-        # different recordings. Tiebreak by release count — more MusicBrainz
-        # releases means a more canonical, well-known recording.
+        # Score tuple (lower = better):
+        #   [0-2] quality metrics (VA penalty, format, has no date)
+        #   [3]   duration diff in seconds vs MB recording length — primary tiebreaker
+        #   [4]   negative release count — secondary tiebreaker when duration is unknown
         release_count = len(recording.get("release-list", []))
-        score = (_score_mb_release(release)[:3] + (-release_count,)) if release else (99, 99, 99, 0)
+        dur_diff = _duration_diff_s(path, recording)
+        score = (_score_mb_release(release)[:3] + (dur_diff, -release_count)) if release else (99, 99, 99, 999, 0)
         if best_candidate is None or score < best_candidate_score:
             best_candidate_score = score
             best_candidate = (mb_id, recording, release)

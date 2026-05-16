@@ -373,6 +373,7 @@ def test_lookup_musicbrainz_tuple_form_fetches_mb_data():
         patch("music_manager.identify.acoustid.match", return_value=iter([tuple_result])),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
         patch("music_manager.identify._fetch_mb_data", return_value=mb_data) as mock_fetch,
+        patch("music_manager.identify._duration_diff_s", return_value=0),
     ):
         track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
@@ -384,7 +385,6 @@ def test_lookup_musicbrainz_tuple_form_fetches_mb_data():
 
 def test_lookup_musicbrainz_tuple_form_picks_best_candidate():
     """When multiple tuple results exist, the one with the better release wins."""
-    # Two candidates: first has a DVD release, second has a CD release.
     results = [
         (0.99, "bad-id",  "Song", "Artist"),
         (0.99, "good-id", "Song", "Artist"),
@@ -401,6 +401,7 @@ def test_lookup_musicbrainz_tuple_form_picks_best_candidate():
         patch("music_manager.identify.acoustid.match", return_value=iter(results)),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
         patch("music_manager.identify._fetch_mb_data", side_effect=[bad_data, good_data]),
+        patch("music_manager.identify._duration_diff_s", return_value=0),
     ):
         track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
@@ -409,28 +410,62 @@ def test_lookup_musicbrainz_tuple_form_picks_best_candidate():
     assert track.year == "1997"
 
 
+def test_lookup_musicbrainz_tuple_form_uses_duration_as_tiebreaker():
+    """When release quality ties, the candidate whose MB duration matches the file wins."""
+    results = [
+        (0.99, "wrong-id", "Wrong Song", "Artist"),  # first, many releases, wrong duration
+        (0.99, "right-id", "Right Song", "Artist"),  # second, fewer releases, correct duration
+    ]
+    wrong_data = (
+        {"id": "wrong-id", "title": "Wrong Song", "length": "232000",
+         "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}],
+         "release-list": [{"id": f"r{i}"} for i in range(25)]},
+        {"title": "Wrong Album", "date": "1992", "artist-credit": [], "medium-list": [{"format": "CD"}]},
+    )
+    right_data = (
+        {"id": "right-id", "title": "Right Song", "length": "51000",
+         "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}],
+         "release-list": [{"id": "r1"}, {"id": "r2"}]},
+        {"title": "Right Album", "date": "1999", "artist-credit": [], "medium-list": [{"format": "CD"}]},
+    )
+    # File duration is 50.7s — matches "right-id" (51s), not "wrong-id" (232s)
+    def fake_duration_diff(path, recording):
+        return abs(50700 - int(recording.get("length", 0))) // 1000
+
+    with (
+        patch("music_manager.identify.acoustid.match", return_value=iter(results)),
+        patch("music_manager.identify.musicbrainzngs.set_useragent"),
+        patch("music_manager.identify._fetch_mb_data", side_effect=[wrong_data, right_data]),
+        patch("music_manager.identify._duration_diff_s", side_effect=fake_duration_diff),
+    ):
+        track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
+
+    assert track is not None
+    assert track.title == "Right Song"
+    assert track.album == "Right Album"
+
+
 def test_lookup_musicbrainz_tuple_form_uses_release_count_as_tiebreaker():
-    """When format/VA scores tie, the candidate with more MusicBrainz releases wins."""
-    # Two candidates: same format/date quality, but different release counts.
-    # The newer song with more releases should beat the older song with fewer.
+    """When format/VA/duration scores all tie, the candidate with more releases wins."""
     results = [
         (0.99, "older-id", "Older Song", "Artist"),
         (0.99, "newer-id", "Newer Song", "Artist"),
     ]
     older_data = (
         {"id": "older-id", "title": "Older Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}],
-         "release-list": [{"id": "r1"}, {"id": "r2"}]},  # 2 releases
+         "release-list": [{"id": "r1"}, {"id": "r2"}]},
         {"title": "Older Album", "date": "1992", "artist-credit": [], "medium-list": [{"format": "CD"}]},
     )
     newer_data = (
         {"id": "newer-id", "title": "Newer Song", "artist-credit": [{"artist": {"name": "Artist"}, "joinphrase": ""}],
-         "release-list": [{"id": f"r{i}"} for i in range(25)]},  # 25 releases
+         "release-list": [{"id": f"r{i}"} for i in range(25)]},
         {"title": "Newer Album", "date": "1998", "artist-credit": [], "medium-list": [{"format": "CD"}]},
     )
     with (
         patch("music_manager.identify.acoustid.match", return_value=iter(results)),
         patch("music_manager.identify.musicbrainzngs.set_useragent"),
         patch("music_manager.identify._fetch_mb_data", side_effect=[older_data, newer_data]),
+        patch("music_manager.identify._duration_diff_s", return_value=30),  # both unknown
     ):
         track = lookup_musicbrainz(FAKE_PATH, FAKE_API_KEY)
 
