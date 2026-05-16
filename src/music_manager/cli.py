@@ -48,7 +48,7 @@ def _process_track(src_wav: Path, api_key: str | None, library_root: Path) -> _T
 
     try:
         track = identify(alac_path, api_key)
-    except acoustid.WebServiceError as exc:
+    except (acoustid.WebServiceError, acoustid.FingerprintGenerationError) as exc:
         return _TrackResult(src=src_wav, status="error", label=str(exc))
 
     if not track.title:
