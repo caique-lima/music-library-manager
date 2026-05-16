@@ -17,6 +17,7 @@ def _fake_track(alac_path: Path) -> Track:
         title="Paranoid Android",
         track_number=2,
         musicbrainz_recording_id="mb-id",
+        cover_art=b"\xff\xd8\xff",  # minimal JPEG header
     )
 
 
@@ -169,6 +170,24 @@ def test_fix_track_uses_existing_tags_when_complete(tmp_path):
         result = _fix_track(m4a, FAKE_API_KEY, tmp_path)
 
     mock_identify.assert_not_called()
+    assert result.status == "ok"
+
+
+def test_fix_track_reidentifies_when_cover_art_missing(tmp_path):
+    m4a = tmp_path / "track.m4a"
+    m4a.touch()
+    no_art = Track(path=m4a, title="Paranoid Android", artist="Radiohead",
+                   album="OK Computer", year="1997")  # cover_art=b""
+    dest = tmp_path / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
+
+    with (
+        patch("music_manager.cli.read_tags", return_value=no_art),
+        patch("music_manager.cli.identify", return_value=_fake_track(m4a)),
+        patch("music_manager.cli.tag_track"),
+        patch("music_manager.cli.move_track", return_value=dest),
+    ):
+        result = _fix_track(m4a, FAKE_API_KEY, tmp_path)
+
     assert result.status == "ok"
 
 

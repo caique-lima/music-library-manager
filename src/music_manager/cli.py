@@ -264,7 +264,7 @@ def _fix_track(
 
     track = read_tags(m4a)
 
-    if not track.title or not track.artist:
+    if not track.title or not track.artist or not track.cover_art:
         _phase("identifying")
         try:
             track = identify(m4a, api_key)

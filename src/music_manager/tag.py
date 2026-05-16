@@ -11,6 +11,7 @@ COVER_ART_URL = "https://coverartarchive.org/recording/{recording_id}/front"
 def read_tags(path: Path) -> Track:
     """Read existing MP4 tags from a file into a Track."""
     audio = MP4(str(path))
+    covers = audio.get("covr", [])
     return Track(
         path=path,
         title=audio.get("\xa9nam", [""])[0],
@@ -20,6 +21,7 @@ def read_tags(path: Path) -> Track:
         genre=audio.get("\xa9gen", [""])[0],
         track_number=audio.get("trkn", [(0, 0)])[0][0],
         album_artist=audio.get("aART", [""])[0],
+        cover_art=bytes(covers[0]) if covers else b"",
     )
 
 
