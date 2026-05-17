@@ -5,7 +5,7 @@ from mutagen.mp4 import MP4, MP4Cover
 from music_manager.cache import fetch_url
 from music_manager.track import Track
 
-COVER_ART_URL = "https://coverartarchive.org/recording/{recording_id}/front"
+COVER_ART_URL = "https://coverartarchive.org/release/{release_id}/front"
 
 
 def read_tags(path: Path) -> Track:
@@ -23,8 +23,8 @@ def read_tags(path: Path) -> Track:
     )
 
 
-def fetch_cover_art(musicbrainz_recording_id: str) -> bytes:
-    return fetch_url(COVER_ART_URL.format(recording_id=musicbrainz_recording_id))
+def fetch_cover_art(musicbrainz_release_id: str) -> bytes:
+    return fetch_url(COVER_ART_URL.format(release_id=musicbrainz_release_id))
 
 
 def write_tags(track: Track) -> None:
@@ -53,6 +53,6 @@ def write_tags(track: Track) -> None:
 
 def tag_track(track: Track) -> None:
     """Orchestrate cover art fetching and tag writing for a track."""
-    if track.musicbrainz_recording_id and not track.cover_art:
-        track.cover_art = fetch_cover_art(track.musicbrainz_recording_id)
+    if track.musicbrainz_release_id and not track.cover_art:
+        track.cover_art = fetch_cover_art(track.musicbrainz_release_id)
     write_tags(track)
