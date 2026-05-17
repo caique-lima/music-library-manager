@@ -42,7 +42,7 @@ class TestFetchCoverArt:
         with patch("music_manager.tag.fetch_url", return_value=FAKE_JPEG) as mock_fetch:
             result = fetch_cover_art("some-recording-id")
         mock_fetch.assert_called_once_with(
-            "https://coverartarchive.org/recording/some-recording-id/front"
+            "https://coverartarchive.org/release/some-recording-id/front"
         )
         assert result == FAKE_JPEG
 
@@ -128,12 +128,12 @@ class TestWriteTags:
 # ---------------------------------------------------------------------------
 
 class TestTagTrack:
-    def test_calls_fetch_cover_art_when_recording_id_set_and_cover_art_empty(self, tmp_path):
+    def test_calls_fetch_cover_art_when_release_id_set_and_cover_art_empty(self, tmp_path):
         m4a_path = make_test_m4a(tmp_path / "track.m4a")
         track = Track(
             path=m4a_path,
             title="Test",
-            musicbrainz_recording_id="abc-123",
+            musicbrainz_release_id="abc-123",
         )
 
         with patch("music_manager.tag.fetch_cover_art", return_value=FAKE_JPEG) as mock_fetch:
@@ -147,7 +147,7 @@ class TestTagTrack:
         track = Track(
             path=m4a_path,
             title="Test",
-            musicbrainz_recording_id="abc-123",
+            musicbrainz_release_id="abc-123",
             cover_art=FAKE_JPEG,
         )
 
@@ -156,7 +156,7 @@ class TestTagTrack:
 
         mock_fetch.assert_not_called()
 
-    def test_skips_fetch_cover_art_when_no_recording_id(self, tmp_path):
+    def test_skips_fetch_cover_art_when_no_release_id(self, tmp_path):
         m4a_path = make_test_m4a(tmp_path / "track.m4a")
         track = Track(path=m4a_path, title="No ID")
 

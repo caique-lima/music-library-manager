@@ -165,6 +165,7 @@ def _build_track_from_mb(mb_id: str, recording: dict, release: dict, path: Path)
         title=title,
         track_number=track_number,
         musicbrainz_recording_id=mb_id,
+        musicbrainz_release_id=release.get("id", ""),
     )
 
 
@@ -190,7 +191,7 @@ def _itunes_search_enrich(track: Track) -> None:
     Mutates *track* in place. No-ops when all target fields are already
     populated or when the track lacks enough data to form a useful query.
     """
-    if track.genre and track.album and track.album_artist:
+    if track.genre and track.album and track.album_artist and track.cover_art:
         return
     if not track.title or not track.artist:
         return
@@ -225,6 +226,11 @@ def _itunes_search_enrich(track: Track) -> None:
         track.album_artist = match.get("collectionArtistName", "")
     if not track.year:
         track.year = (match.get("releaseDate") or "")[:4]
+    if not track.cover_art:
+        artwork_url = match.get("artworkUrl100", "")
+        if artwork_url:
+            artwork_url = artwork_url.replace("100x100bb", "600x600bb")
+            track.cover_art = fetch_url(artwork_url)
 
 
 def fingerprint(path: Path) -> str:
@@ -290,6 +296,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
             title=title,
             track_number=track_number,
             musicbrainz_recording_id=mb_id,
+            musicbrainz_release_id=release.get("id", ""),
         )
 
     # Tuple form: (score, recording_id, title, artist) — try up to 6 unique
