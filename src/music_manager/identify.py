@@ -301,6 +301,17 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         title = recording.get("title", "")
 
         releases = recording.get("releases", [])
+        album_releases = [r for r in releases if _is_studio_album(r)]
+
+        # AcoustID's compact response truncates release lists (typically ≤5 results),
+        # so studio albums are often absent when the recording has many singles/EPs.
+        # Fall back to a full MusicBrainz lookup to get the complete release list.
+        if not album_releases and mb_id:
+            mb_track = _fetch_from_musicbrainz(mb_id, path)
+            if mb_track:
+                mb_track.acoustid_score = acoustid_score
+                return mb_track
+
         release = _best_release(releases)
 
         # Use release-level artists (album artist, no feat. credits).

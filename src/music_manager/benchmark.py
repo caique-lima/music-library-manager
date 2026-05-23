@@ -25,17 +25,54 @@ from .track import Track
 _EDITION_RE = re.compile(
     r"\s*\((?:bonus track(?: version)?|remaster(?:ed)?|deluxe.*?|expanded.*?|"
     r"anniversary.*?|special.*?edition|original.*?(?:version|motion picture soundtrack)|"
-    r"complete edition.*?|live|explicit)[^)]*\)\s*",
+    r"complete edition.*?|alternate lyrics|alt\.? lyrics|instrumental.*?|"
+    r"censored.*?|clean.*?version|digital.*?dub|live)[^)]*\)\s*",
     re.IGNORECASE,
 )
-_BRACKET_FEAT_RE = re.compile(r"\s*\[feat\.[^\]]*\]\s*", re.IGNORECASE)
+# Square-bracket labels to strip: [feat. X], [Skit], [Interlude], [Bonus Track]
+_BRACKET_STRIP_RE = re.compile(
+    r"\s*\[(?:feat\.[^\]]*|skit|interlude|bonus track[^\]]*|live[^\]]*)\]\s*",
+    re.IGNORECASE,
+)
+# Round-bracket feat. credits in titles: (feat. X)
+_PAREN_FEAT_RE = re.compile(r"\s*\(feat\.[^)]*\)\s*", re.IGNORECASE)
+# Non-parenthetical subtitle separators common in soundtrack/edition album names:
+#   "TRON: Legacy: Original Motion Picture Soundtrack"
+#   "TRON: Legacy - The Complete Edition (Original Motion Picture Soundtrack)"
+_NON_PAREN_SUFFIX_RE = re.compile(
+    r"\s*[:\-]\s*(?:the complete edition.*|original motion picture soundtrack.*|"
+    r"complete edition.*)$",
+    re.IGNORECASE,
+)
+# "Pt." / "Part" normalisation so "Encom, Pt. II" matches "ENCOM Part II"
+_PT_RE = re.compile(r"\bpt\.?\s+", re.IGNORECASE)
 
 
 def _normalize(s: str) -> str:
     """Lowercase, strip edition/feat parentheticals, collapse whitespace."""
     s = _EDITION_RE.sub(" ", s)
-    s = _BRACKET_FEAT_RE.sub(" ", s)
+    s = _BRACKET_STRIP_RE.sub(" ", s)
+    s = _PAREN_FEAT_RE.sub(" ", s)
+    s = _NON_PAREN_SUFFIX_RE.sub("", s)
+    s = _PT_RE.sub("part ", s)
     return re.sub(r"\s+", " ", s.lower()).strip()
+
+
+def _is_medley_component(a: str, b: str) -> bool:
+    """Return True when one string is a '/' component of the other.
+
+    Handles cases like "Burnin' / Too Long (Live)" being identified as just
+    "Too Long" — the identified title is contained in the medley title.
+    """
+    if "/" not in a and "/" not in b:
+        return False
+    for medley, part in [(a, b), (b, a)]:
+        if "/" in medley:
+            components = [c.strip().lower() for c in medley.split("/")]
+            part_norm = _normalize(part)
+            if any(_similarity(part_norm, _normalize(c)) >= 0.85 for c in components):
+                return True
+    return False
 
 
 def _similarity(a: str, b: str) -> float:
@@ -45,7 +82,7 @@ def _similarity(a: str, b: str) -> float:
 
 
 def _field_match(a: str, b: str, threshold: float = 0.85) -> bool:
-    return _similarity(a, b) >= threshold
+    return _similarity(a, b) >= threshold or _is_medley_component(a, b)
 
 
 @dataclass
