@@ -43,18 +43,34 @@ def _score_release(release: dict) -> tuple:
     release_type = rg.get("type", "")
     secondary_types = rg.get("secondarytypes", [])
 
-    secondary_penalty = 10 if any(t in ("Live", "Compilation") for t in secondary_types) else 0
+    secondary_penalty = 10 if any(t in ("Compilation",) for t in secondary_types) else 0
     type_score = _RELEASE_TYPE_SCORE.get(release_type, 2)
     has_no_date = 0 if release.get("date") else 1
 
     return (secondary_penalty, type_score, has_no_date)
 
 
+def _is_studio_album(release: dict) -> bool:
+    """Return True when a release belongs to a non-live, non-compilation Album group."""
+    rgs = release.get("releasegroups", [])
+    rg = rgs[0] if rgs else {}
+    return (
+        rg.get("type", "") == "Album"
+        and not any(t in ("Live", "Compilation") for t in rg.get("secondarytypes", []))
+    )
+
+
 def _best_release(releases: list) -> dict:
-    """Return the preferred release from an AcoustID releases list."""
+    """Return the preferred release from an AcoustID releases list.
+
+    When any studio-album release exists, singles and EPs are excluded so they
+    can never beat the canonical album — the main cause of "Single name as album"
+    mis-identification.
+    """
     if not releases:
         return {}
-    return min(releases, key=_score_release)
+    album_releases = [r for r in releases if _is_studio_album(r)]
+    return min(album_releases or releases, key=_score_release)
 
 
 # MusicBrainz medium formats that are audio-only (lower score = preferred).
@@ -64,9 +80,12 @@ _MB_FORMAT_SCORE = {
     "DVD": 5, "DVD-Video": 5, "Blu-ray": 5, "VHS": 5,
 }
 
+# Release-group type penalty for MusicBrainz releases (lower = preferred).
+_MB_RG_TYPE_SCORE = {"Album": 0, "EP": 2, "Single": 5, "Broadcast": 8, "Other": 8}
+
 
 def _score_mb_release(release: dict) -> tuple:
-    """Sort key for a MusicBrainz release dict: prefer audio formats, non-VA, earlier dates."""
+    """Sort key for a MusicBrainz release dict: prefer studio albums, audio formats, non-VA."""
     medium_list = release.get("medium-list", [])
     fmt = medium_list[0].get("format", "") if medium_list else ""
     format_score = _MB_FORMAT_SCORE.get(fmt, 0)
@@ -77,11 +96,20 @@ def _score_mb_release(release: dict) -> tuple:
         for e in artist_credit
     ) else 0
 
+    # Release-group type: prefer Album over Single/EP (populated when includes
+    # contain "release-groups" in the MusicBrainz recording query).
+    rg = release.get("release-group", {}) or {}
+    rg_type = rg.get("type", "") or rg.get("primary-type", "")
+    rg_secondary = rg.get("secondary-type-list", []) or []
+    rg_penalty = _MB_RG_TYPE_SCORE.get(rg_type, 1)
+    if any(t in ("Compilation",) for t in rg_secondary):
+        rg_penalty += 10
+
     has_no_date = 0 if release.get("date") else 1
     date = release.get("date", "")
     year = int(date[:4]) if date and date[:4].isdigit() else 9999
 
-    return (va_penalty, format_score, has_no_date, year)
+    return (va_penalty, rg_penalty, format_score, has_no_date, year)
 
 
 def _duration_diff_s(path: Path, recording: dict) -> int:
@@ -118,7 +146,7 @@ def _fetch_mb_data(mb_id: str) -> "tuple[dict, dict] | None":
             mb_id,
             includes=["artists", "releases", "media", "artist-credits"],
         )
-    except musicbrainzngs.WebServiceError:
+    except Exception:
         return None
     recording = result.get("recording", {})
     if not recording:
@@ -195,6 +223,9 @@ def _itunes_search_enrich(track: Track) -> None:
         return
     if not track.title or not track.artist:
         return
+    # Always ensure album_artist is populated after enrichment — even if iTunes
+    # doesn't return collectionArtistName, fall back to track artist so the iPod
+    # "Album Artist" tag is never blank.
 
     url = _ITUNES_SEARCH_URL + "?" + urlencode({
         "term": f"{track.artist} {track.title}",
@@ -223,7 +254,7 @@ def _itunes_search_enrich(track: Track) -> None:
     if not track.album:
         track.album = match.get("collectionName", "")
     if not track.album_artist:
-        track.album_artist = match.get("collectionArtistName", "")
+        track.album_artist = match.get("collectionArtistName", "") or track.artist
     if not track.year:
         track.year = (match.get("releaseDate") or "")[:4]
     if not track.cover_art:
@@ -260,6 +291,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     best = results[0]
 
     if isinstance(best, dict):
+        acoustid_score = float(best.get("score", 0.0))
         recordings = best.get("recordings", [])
         if not recordings:
             return None
@@ -297,6 +329,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
             track_number=track_number,
             musicbrainz_recording_id=mb_id,
             musicbrainz_release_id=release.get("id", ""),
+            acoustid_score=acoustid_score,
         )
 
     # Tuple form: (score, recording_id, title, artist) — try up to 6 unique
@@ -307,7 +340,8 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     # appear at index 4 while lower-indexed IDs resolve to compilations/DVDs.
     seen: set[str] = set()
     best_candidate: "tuple[str, dict, dict] | None" = None
-    best_candidate_score: tuple = (99, 99, 99, 999, 0)
+    best_candidate_score: tuple = (99, 99, 99, 999, 0)  # (va, rg_type, format, dur_diff, -count)
+    top_tuple_score: float = float(results[0][0]) if results and not isinstance(results[0], dict) else 0.0
 
     for result in results:
         if len(seen) >= 6:
@@ -335,21 +369,67 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
     if best_candidate is None:
         return None
     mb_id, recording, release = best_candidate
-    return _build_track_from_mb(mb_id, recording, release, path)
+    track = _build_track_from_mb(mb_id, recording, release, path)
+    track.acoustid_score = top_tuple_score
+    return track
+
+
+def _should_prefer_shazam(acoustid_track: Track, shazam_track: "Track | None") -> bool:
+    """Return True when Shazam's result is more trustworthy than AcoustID's.
+
+    Two cases:
+    1. Low AcoustID confidence (score < 0.4) — Shazam's direct recognition wins.
+    2. Year gap > 5 years — AcoustID matched the right fingerprint but chose the
+       wrong release (e.g. a 1992 compilation for a track whose canonical release
+       is 1999).  Shazam's result is preferred in that case.
+    """
+    if shazam_track is None or not shazam_track.title:
+        return False
+    if 0 < acoustid_track.acoustid_score < 0.4:
+        return True
+    try:
+        ay = int(acoustid_track.year)
+        sy = int(shazam_track.year)
+    except (ValueError, TypeError):
+        return False
+    return abs(ay - sy) > 5
 
 
 def identify(path: Path, acoustid_api_key: str | None = None) -> Track:
-    """Identify a track via AcoustID + MusicBrainz.
+    """Identify a track via AcoustID → MusicBrainz, with Shazam cross-check and fallback.
+
+    Pipeline:
+      1. AcoustID fingerprint → MusicBrainz metadata
+      2. iTunes enrichment (fills genre, album_artist, cover art)
+      3. Shazam cross-check: if AcoustID year differs from Shazam by >5 years,
+         the AcoustID result matched the wrong release — swap to Shazam's result
+      4. If AcoustID found nothing, Shazam is the primary source
+      5. Guarantee album_artist is always set
 
     Returns the best matching Track, or an empty Track if nothing matched.
     """
+    from .shazam import identify_via_shazam
+
+    result: Track | None = None
+
     if acoustid_api_key:
         try:
             result = lookup_musicbrainz(path, acoustid_api_key)
-            if result is not None:
-                _itunes_search_enrich(result)
-                return result
-        except acoustid.WebServiceError:
+        except Exception:
             pass
 
-    return Track(path=path)
+    if result is not None:
+        _itunes_search_enrich(result)
+        shazam_result = identify_via_shazam(path)
+        if _should_prefer_shazam(result, shazam_result):
+            result = shazam_result
+    else:
+        result = identify_via_shazam(path)
+
+    if result is None:
+        return Track(path=path)
+
+    if result.title and not result.album_artist:
+        result.album_artist = result.artist
+
+    return result

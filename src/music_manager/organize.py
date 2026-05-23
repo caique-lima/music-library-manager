@@ -5,35 +5,28 @@ from music_manager.track import Track
 
 
 def _sanitize(component: str) -> str:
-    """Strip leading/trailing whitespace and replace '/' with '-'."""
-    return component.strip().replace("/", "-")
+    """Strip leading/trailing whitespace, replace '/' with '-' and ':' with ' - '."""
+    return component.strip().replace("/", "-").replace(":", " - ")
 
 
 def destination_path(track: Track, library_root: Path) -> Path:
     """Compute the target path for a track within the library.
 
-    Pattern: library_root / artist / "album (YEAR)" / "NN title.m4a"
+    Pattern: library_root / album_artist / album / "artist - title.m4a"
     """
     folder_artist = track.album_artist.strip() or track.artist.strip()
     artist = _sanitize(folder_artist) if folder_artist else "Unknown Artist"
-    album = _sanitize(track.album) if track.album.strip() else "Unknown Album"
-    year = _sanitize(track.year)
+    album_folder = _sanitize(track.album) if track.album.strip() else "Unknown Album"
 
-    if year:
-        album_folder = f"{album} ({year})"
-    else:
-        album_folder = album
+    track_artist_raw = track.artist.strip() or folder_artist
+    track_artist = _sanitize(track_artist_raw) if track_artist_raw else "Unknown Artist"
 
     if track.title.strip():
         title = _sanitize(track.title)
     else:
         title = track.path.stem
 
-    if track.track_number:
-        filename = f"{track.track_number:02d} {title}.m4a"
-    else:
-        filename = f"{title}.m4a"
-
+    filename = f"{track_artist} - {title}.m4a"
     return library_root / artist / album_folder / filename
 
 

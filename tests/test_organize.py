@@ -29,7 +29,7 @@ def make_track(tmp_path: Path, filename: str = "song.m4a", **kwargs) -> Track:
 def test_destination_path_fully_populated(tmp_path):
     track = make_track(tmp_path, track_number=3, title="Something")
     dest = destination_path(track, tmp_path / "lib")
-    assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road (1969)" / "03 Something.m4a"
+    assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road" / "The Beatles - Something.m4a"
 
 
 def test_destination_path_uses_album_artist_for_folder(tmp_path):
@@ -47,8 +47,7 @@ def test_destination_path_falls_back_to_artist_when_no_album_artist(tmp_path):
 def test_destination_path_track_number_zero(tmp_path):
     track = make_track(tmp_path, track_number=0, title="Something")
     dest = destination_path(track, tmp_path / "lib")
-    # No numeric prefix when track_number is 0
-    assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road (1969)" / "Something.m4a"
+    assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road" / "The Beatles - Something.m4a"
 
 
 def test_destination_path_empty_artist_album_year(tmp_path):
@@ -61,7 +60,7 @@ def test_destination_path_empty_artist_album_year(tmp_path):
         track_number=1,
     )
     dest = destination_path(track, tmp_path / "lib")
-    assert dest == tmp_path / "lib" / "Unknown Artist" / "Unknown Album" / "01 My Song.m4a"
+    assert dest == tmp_path / "lib" / "Unknown Artist" / "Unknown Album" / "Unknown Artist - My Song.m4a"
 
 
 def test_destination_path_empty_title_uses_stem(tmp_path):
@@ -74,14 +73,14 @@ def test_destination_path_empty_title_uses_stem(tmp_path):
         track_number=2,
     )
     dest = destination_path(track, tmp_path / "lib")
-    assert dest == tmp_path / "lib" / "Artist" / "Album (2000)" / "02 original_stem.m4a"
+    assert dest == tmp_path / "lib" / "Artist" / "Album" / "Artist - original_stem.m4a"
 
 
-def test_destination_path_no_year_suffix(tmp_path):
-    track = make_track(tmp_path, year="", title="Song")
+def test_destination_path_no_year_in_folder(tmp_path):
+    # Year is never appended to the album folder, even when set
+    track = make_track(tmp_path, year="1969", title="Song")
     dest = destination_path(track, tmp_path / "lib")
-    # Album folder should not have a year suffix
-    assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road" / "01 Song.m4a"
+    assert dest == tmp_path / "lib" / "The Beatles" / "Abbey Road" / "The Beatles - Song.m4a"
 
 
 def test_destination_path_sanitizes_slashes(tmp_path):
@@ -94,7 +93,21 @@ def test_destination_path_sanitizes_slashes(tmp_path):
         track_number=5,
     )
     dest = destination_path(track, tmp_path / "lib")
-    assert dest == tmp_path / "lib" / "AC-DC" / "Highway-To Hell (1979)" / "05 Touch-Too Much.m4a"
+    assert dest == tmp_path / "lib" / "AC-DC" / "Highway-To Hell" / "AC-DC - Touch-Too Much.m4a"
+
+
+def test_destination_path_sanitizes_colons(tmp_path):
+    track = Track(
+        path=tmp_path / "song.m4a",
+        artist="Queensrÿche",
+        album="Operation: Mindcrime",
+        year="1988",
+        title="Eyes of a Stranger",
+        track_number=15,
+    )
+    dest = destination_path(track, tmp_path / "lib")
+    # "Operation: Mindcrime" → _sanitize → "Operation -  Mindcrime" (": " becomes " -  ")
+    assert dest == tmp_path / "lib" / "Queensrÿche" / "Operation -  Mindcrime" / "Queensrÿche - Eyes of a Stranger.m4a"
 
 
 def test_destination_path_strips_whitespace(tmp_path):
@@ -107,13 +120,14 @@ def test_destination_path_strips_whitespace(tmp_path):
         track_number=1,
     )
     dest = destination_path(track, tmp_path / "lib")
-    assert dest == tmp_path / "lib" / "Led Zeppelin" / "IV (1971)" / "01 Black Dog.m4a"
+    assert dest == tmp_path / "lib" / "Led Zeppelin" / "IV" / "Led Zeppelin - Black Dog.m4a"
 
 
-def test_destination_path_track_number_zero_padded(tmp_path):
+def test_destination_path_track_number_ignored_in_filename(tmp_path):
+    # track_number no longer affects the filename — format is always artist - title
     track = make_track(tmp_path, track_number=9, title="Track Nine")
     dest = destination_path(track, tmp_path / "lib")
-    assert dest.name == "09 Track Nine.m4a"
+    assert dest.name == "The Beatles - Track Nine.m4a"
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +152,7 @@ def test_move_track_moves_file_and_updates_path(tmp_path):
 
     result = move_track(track, lib)
 
-    expected = lib / "Radiohead" / "OK Computer (1997)" / "02 Paranoid Android.m4a"
+    expected = lib / "Radiohead" / "OK Computer" / "Radiohead - Paranoid Android.m4a"
     assert result == expected
     assert track.path == expected
     assert expected.exists()
