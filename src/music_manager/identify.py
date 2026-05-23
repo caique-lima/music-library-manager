@@ -36,7 +36,7 @@ def _join_artists(artists: list[dict]) -> str:
 _RELEASE_TYPE_SCORE = {"Album": 0, "Single": 1, "EP": 1, "": 2, "Broadcast": 3, "Other": 3}
 
 
-def _score_release(release: dict) -> tuple:
+def _score_release(release: dict, recording_title: str = "") -> tuple:
     """Sort key for an AcoustID release dict: prefer studio albums."""
     rgs = release.get("releasegroups", [])
     rg = rgs[0] if rgs else {}
@@ -47,7 +47,22 @@ def _score_release(release: dict) -> tuple:
     type_score = _RELEASE_TYPE_SCORE.get(release_type, 2)
     has_no_date = 0 if release.get("date") else 1
 
-    return (secondary_penalty, type_score, has_no_date)
+    # Penalise self-titled releases (e.g. a "Da Funk" single when we want the
+    # "Homework" album).  AcoustID data sometimes labels singles as type "Album".
+    self_titled = (
+        1 if recording_title
+        and release.get("title", "").lower().strip() == recording_title.lower().strip()
+        else 0
+    )
+
+    # Track-count tiebreaker: AcoustID includes per-medium track lists when
+    # meta="tracks" is requested.  Sum them; cap at 30 so mega-compilations
+    # don't dominate after they're already penalised by secondary_penalty.
+    mediums = release.get("mediums", [])
+    track_count = sum(len(m.get("tracks", [])) for m in mediums)
+    track_count_score = -min(track_count, 30)
+
+    return (secondary_penalty, type_score + self_titled, has_no_date, track_count_score)
 
 
 def _is_studio_album(release: dict) -> bool:
@@ -60,7 +75,7 @@ def _is_studio_album(release: dict) -> bool:
     )
 
 
-def _best_release(releases: list) -> dict:
+def _best_release(releases: list, recording_title: str = "") -> dict:
     """Return the preferred release from an AcoustID releases list.
 
     When any studio-album release exists, singles and EPs are excluded so they
@@ -70,7 +85,10 @@ def _best_release(releases: list) -> dict:
     if not releases:
         return {}
     album_releases = [r for r in releases if _is_studio_album(r)]
-    return min(album_releases or releases, key=_score_release)
+    return min(
+        album_releases or releases,
+        key=lambda r: _score_release(r, recording_title),
+    )
 
 
 # MusicBrainz medium formats that are audio-only (lower score = preferred).
@@ -102,14 +120,26 @@ def _score_mb_release(release: dict) -> tuple:
     rg_type = rg.get("type", "") or rg.get("primary-type", "")
     rg_secondary = rg.get("secondary-type-list", []) or []
     rg_penalty = _MB_RG_TYPE_SCORE.get(rg_type, 1)
-    if any(t in ("Compilation",) for t in rg_secondary):
+    if any(t in ("Compilation", "Live") for t in rg_secondary):
         rg_penalty += 10
+
+    # Penalise releases whose title contains "Instrumental" — avoids picking
+    # the instrumental variant of an album ("2001: Instrumentals") over the
+    # canonical release ("2001").
+    if "instrumental" in release.get("title", "").lower():
+        rg_penalty += 5
 
     has_no_date = 0 if release.get("date") else 1
     date = release.get("date", "")
     year = int(date[:4]) if date and date[:4].isdigit() else 9999
 
-    return (va_penalty, rg_penalty, format_score, has_no_date, year)
+    # Track-count tiebreaker: prefer releases with more tracks so a full album
+    # beats a single/EP when release-group types are otherwise equal.
+    track_count = sum(int(m.get("track-count", 0) or 0) for m in medium_list)
+    # Negative: fewer tracks → higher (worse) score.
+    track_count_score = -min(track_count, 30)
+
+    return (va_penalty, rg_penalty, format_score, has_no_date, year, track_count_score)
 
 
 def _duration_diff_s(path: Path, recording: dict) -> int:
@@ -312,7 +342,7 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
                 mb_track.acoustid_score = acoustid_score
                 return mb_track
 
-        release = _best_release(releases)
+        release = _best_release(releases, recording_title=title)
 
         # Use release-level artists (album artist, no feat. credits).
         # Fall back to recording-level if the release has none.

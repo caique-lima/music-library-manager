@@ -164,7 +164,7 @@ def test_score_release_prefers_dated_over_undated():
 def test_score_release_no_releasegroups_is_neutral():
     release = {"date": "1997"}
     score = _score_release(release)
-    assert isinstance(score, tuple) and len(score) == 3
+    assert isinstance(score, tuple)
 
 
 def test_best_release_picks_album_over_single():

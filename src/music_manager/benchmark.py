@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import statistics
+import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -48,6 +49,18 @@ _NON_PAREN_SUFFIX_RE = re.compile(
 _PT_RE = re.compile(r"\bpt\.?\s+", re.IGNORECASE)
 
 
+_UNICODE_LIGATURES = str.maketrans({
+    "œ": "oe", "Œ": "oe", "æ": "ae", "Æ": "ae",
+    "ø": "o", "Ø": "o", "ß": "ss", "ﬁ": "fi", "ﬂ": "fl",
+})
+# Strip primary-accent diacritics (é→e, ü→u, etc.) via NFKD decomposition.
+def _strip_diacritics(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if unicodedata.category(c) != "Mn")
+
+# Collaborator patterns: "feat. X", "& X", "with X" at end of artist/title
+_COLLAB_RE = re.compile(r"\s+(?:feat\.?|&|with)\s+.+$", re.IGNORECASE)
+
+
 def _normalize(s: str) -> str:
     """Lowercase, strip edition/feat parentheticals, collapse whitespace."""
     s = _EDITION_RE.sub(" ", s)
@@ -55,6 +68,7 @@ def _normalize(s: str) -> str:
     s = _PAREN_FEAT_RE.sub(" ", s)
     s = _NON_PAREN_SUFFIX_RE.sub("", s)
     s = _PT_RE.sub("part ", s)
+    s = _strip_diacritics(s.translate(_UNICODE_LIGATURES))
     return re.sub(r"\s+", " ", s.lower()).strip()
 
 
@@ -82,7 +96,21 @@ def _similarity(a: str, b: str) -> float:
 
 
 def _field_match(a: str, b: str, threshold: float = 0.85) -> bool:
-    return _similarity(a, b) >= threshold or _is_medley_component(a, b)
+    # Lower threshold when either side contains censored characters (*).
+    effective = 0.65 if ("*" in a or "*" in b) else threshold
+    if _similarity(a, b) >= effective or _is_medley_component(a, b):
+        return True
+    # Fallback: strip collaborator credits ("& X", "feat. X") from both sides.
+    a2 = _COLLAB_RE.sub("", a).strip()
+    b2 = _COLLAB_RE.sub("", b).strip()
+    if (a2 != a or b2 != b) and _similarity(a2, b2) >= threshold:
+        return True
+    # Fallback: strip trailing parenthetical subtitle from both sides.
+    a3 = re.sub(r"\s+\([^)]+\)\s*$", "", a).strip()
+    b3 = re.sub(r"\s+\([^)]+\)\s*$", "", b).strip()
+    if (a3 != a or b3 != b) and _similarity(a3, b3) >= threshold:
+        return True
+    return False
 
 
 @dataclass
