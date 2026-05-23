@@ -1,3 +1,6 @@
+import json
+import random
+import sys
 import click
 import hashlib
 from collections.abc import Callable
@@ -336,6 +339,211 @@ def fix(input_dir: Path, api_key: str | None, workers: int):
     if errors:
         parts.append(f"{errors} errors")
     click.echo(f"\nDone: {', '.join(parts)}.")
+
+
+@cli.command()
+@click.argument("library_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--api-key", envvar="ACOUSTID_API_KEY", default=None,
+              help="AcoustID API key (or set ACOUSTID_API_KEY).")
+@click.option("--workers", default=4, show_default=True,
+              help="Number of tracks to benchmark concurrently.")
+@click.option("--sample", default=0, show_default=True,
+              help="N random tracks per album (0 = all).")
+@click.option("--output", "output_path",
+              type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="Write JSON report to this path (default: stdout).")
+@click.option("--no-shazam", "skip_shazam", is_flag=True,
+              help="Skip Shazam lookups (faster, saves API quota).")
+def benchmark(
+    library_dir: Path,
+    api_key: str | None,
+    workers: int,
+    sample: int,
+    output_path: Path | None,
+    skip_shazam: bool,
+):
+    """Benchmark identification accuracy against embedded tags in an organized library.
+
+    LIBRARY_DIR should be a directory of m4a files already organized with correct
+    tags (e.g. ~/personal_rips).  Each file's embedded title/artist/album tags are
+    treated as ground truth; identify() is run on the same audio and the results
+    are compared field-by-field.
+    """
+    from collections import defaultdict
+    import random
+    from .benchmark import benchmark_track, build_benchmark_report
+
+    m4as = sorted(p for p in library_dir.rglob("*.m4a"))
+    if not m4as:
+        click.echo("No .m4a files found.", err=True)
+        sys.exit(1)
+
+    if sample > 0:
+        by_album: dict[str, list[Path]] = defaultdict(list)
+        for p in m4as:
+            by_album[str(p.parent)].append(p)
+        m4as = sorted(
+            path
+            for files in by_album.values()
+            for path in random.sample(files, min(sample, len(files)))
+        )
+
+    click.echo(
+        f"Benchmarking {len(m4as)} track(s) against embedded ground-truth tags"
+        + (" (no Shazam)" if skip_shazam else "")
+        + "...",
+        err=True,
+    )
+
+    results = []
+
+    def _run(path: Path):
+        return benchmark_track(path, api_key, include_shazam=not skip_shazam, library_root=library_dir)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_run, p): p for p in m4as}
+        done = 0
+        for future in as_completed(futures):
+            done += 1
+            p = futures[future]
+            try:
+                r = future.result()
+                results.append(r)
+                icon = "✓" if r.perfect_match else ("~" if r.title_match else "✗")
+                click.echo(
+                    f"  {icon} [{done}/{len(m4as)}] {r.album_dir}/{p.name}"
+                    + (f"  [{r.source}]" if r.source != "none" else "  [no match]"),
+                    err=True,
+                )
+            except Exception as exc:
+                click.echo(f"  ✗ [{done}/{len(m4as)}] {p.name}: {exc}", err=True)
+
+    report = build_benchmark_report(results)
+    json_out = json.dumps(report, indent=2, ensure_ascii=False)
+
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json_out, encoding="utf-8")
+        click.echo(f"\nReport written to {output_path}", err=True)
+    else:
+        click.echo(json_out)
+
+
+@cli.command()
+@click.argument(
+    "input_dir",
+    type=click.Path(exists=True, path_type=Path),
+)
+@click.option("--api-key", envvar="ACOUSTID_API_KEY", default=None,
+              help="AcoustID API key (or set ACOUSTID_API_KEY).")
+@click.option("--records", "records_path",
+              type=click.Path(exists=False, dir_okay=False, path_type=Path), default=None,
+              help="Path to eval/records.yaml with album-level ground truth.")
+@click.option("--sample", default=0, show_default=True,
+              help="Evaluate only N random files per record (0 = all).")
+@click.option("--output", "output_path",
+              type=click.Path(dir_okay=False, path_type=Path), default=None,
+              help="Write JSON report to this path (default: stdout).")
+@click.option("--no-shazam", "skip_shazam", is_flag=True,
+              help="Skip Shazam lookups (faster, saves rate-limit quota).")
+@click.option("--workers", default=4, show_default=True,
+              help="Number of files to evaluate concurrently.")
+def evaluate(
+    input_dir: Path,
+    api_key: str | None,
+    records_path: Path | None,
+    sample: int,
+    output_path: Path | None,
+    skip_shazam: bool,
+    workers: int,
+):
+    """Evaluate metadata identification accuracy on WAV files — no conversion performed.
+
+    INPUT_DIR may be a directory of WAV files or a single WAV file.
+    """
+    from .evaluate import evaluate_track, parse_record_index
+    from .score import score_report as _score_report
+
+    # ── collect WAV files ────────────────────────────────────────────────────
+    target = input_dir
+    if target.is_file():
+        if target.suffix.upper() != ".WAV":
+            click.echo(f"Error: {target.name} is not a WAV file.", err=True)
+            sys.exit(1)
+        wavs = [target]
+    else:
+        wavs = sorted(p for p in target.iterdir() if p.suffix.upper() == ".WAV")
+
+    if not wavs:
+        click.echo("No WAV files found.", err=True)
+        sys.exit(1)
+
+    # ── optional per-record sampling ─────────────────────────────────────────
+    if sample > 0 and not target.is_file():
+        from collections import defaultdict
+        by_record: dict[str, list[Path]] = defaultdict(list)
+        for w in wavs:
+            by_record[parse_record_index(w)].append(w)
+        wavs = []
+        for rec_files in by_record.values():
+            wavs.extend(random.sample(rec_files, min(sample, len(rec_files))))
+        wavs = sorted(wavs)
+
+    # ── load ground truth ────────────────────────────────────────────────────
+    known_albums: list = []
+    if records_path and records_path.exists():
+        try:
+            import yaml  # type: ignore[import]
+            with records_path.open() as f:
+                data = yaml.safe_load(f)
+            known_albums = data.get("known_albums", [])
+            click.echo(f"Loaded {len(known_albums)} known album(s) from {records_path.name}", err=True)
+        except ImportError:
+            click.echo("Warning: PyYAML not installed; --records ignored.", err=True)
+        except Exception as exc:
+            click.echo(f"Warning: could not load {records_path}: {exc}", err=True)
+
+    # ── run evaluation ───────────────────────────────────────────────────────
+    click.echo(
+        f"Evaluating {len(wavs)} file(s)"
+        + (" (no Shazam)" if skip_shazam else "")
+        + " — WAV files will not be modified.",
+        err=True,
+    )
+
+    eval_results = []
+
+    def _run(wav: Path):
+        return evaluate_track(wav, acoustid_api_key=api_key, include_shazam=not skip_shazam)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_run, w): w for w in wavs}
+        done = 0
+        for future in as_completed(futures):
+            done += 1
+            wav = futures[future]
+            try:
+                result = future.result()
+                eval_results.append(result)
+                status = "✓" if result.current.title else "–"
+                click.echo(f"  {status} [{done}/{len(wavs)}] {wav.name}", err=True)
+            except Exception as exc:
+                click.echo(f"  ✗ [{done}/{len(wavs)}] {wav.name}: {exc}", err=True)
+
+    # ── score and report ─────────────────────────────────────────────────────
+    report = _score_report(eval_results, known_albums=known_albums)
+
+    # Attach per-file raw results for the report printer
+    report["raw_results"] = [r.to_dict() for r in eval_results]
+
+    json_out = json.dumps(report, indent=2, ensure_ascii=False)
+
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json_out, encoding="utf-8")
+        click.echo(f"\nReport written to {output_path}", err=True)
+    else:
+        click.echo(json_out)
 
 
 @cli.command()
