@@ -33,6 +33,14 @@ packages = ["src/music_manager"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: requires ACOUSTID_API_KEY and network access (run with: ACOUSTID_API_KEY=<key> pytest tests/integration/ -m integration)",
+]
+
+[tool.music-manager]
+# Minimum fraction of field checks (title/artist/album/year) that must pass
+# across all integration fixtures. Raise this as pipeline accuracy improves.
+integration_accuracy_threshold = 0.80
 
 [dependency-groups]
 dev = [

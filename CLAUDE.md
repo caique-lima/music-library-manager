@@ -22,11 +22,34 @@ uv run music-manager process <input_dir>                        # full pipeline
 uv run music-manager process <input_dir> --dry-run             # preview only
 uv run music-manager process <input_dir> --workers 8           # more concurrency
 uv run music-manager process <input_dir> --api-key <key>       # prefer AcoustID over Shazam
+
+uv run music-manager fix <input_dir>                           # re-identify/re-tag existing .m4a files (recursive, skips stems/)
+uv run music-manager fix <input_dir> --api-key <key>
+
+uv run music-manager benchmark <library_dir>                   # accuracy vs embedded tags in organized library
+uv run music-manager benchmark <library_dir> --no-shazam --output eval/report.json
+uv run music-manager benchmark <library_dir> --sample 3        # 3 random tracks per album
+
+uv run music-manager evaluate <input_dir>                      # identify WAV files without converting
+uv run music-manager evaluate <input_dir> --records eval/records.yaml --output eval/report.json
+uv run music-manager evaluate <input_dir> --no-shazam --sample 2
+
 uv run music-manager stems <file>                              # stem generation (stub)
 
 # Run tests
 uv run pytest
 uv run pytest tests/test_organize.py::test_destination_path_fully_populated  # single test
+
+# Run live AcoustID integration tests (requires API key, hits real APIs)
+ACOUSTID_API_KEY=<key> uv run pytest tests/integration/ -m integration -v -s
+ACOUSTID_ACCURACY_THRESHOLD=0.90 ACOUSTID_API_KEY=<key> uv run pytest tests/integration/ -m integration -v -s
+
+# Add a new integration test fixture from a real audio file
+uv run python tests/integration/capture.py /path/to/track.m4a \
+    --title "Track Title" --artist "Artist" --album "Album" --year "YYYY"
+
+# Render an eval report
+uv run python eval/report.py eval/report.json
 ```
 
 `ACOUSTID_API_KEY` env var is the alternative to `--api-key`.
@@ -54,7 +77,7 @@ input_dir/*.wav
   delete original WAV
 ```
 
-All tracks run concurrently via `ThreadPoolExecutor` in `cli.py`. Results are printed as each completes via `as_completed`.
+All tracks run concurrently via `ThreadPoolExecutor` in `cli.py`. A Rich live display shows per-worker phase and a rolling result log. Error tracks are moved to `input_dir/failed_conversion/` rather than left in place. Duplicate WAVs (MD5-matched) are deleted before processing begins.
 
 ### Track dataclass (`track.py`)
 
@@ -73,9 +96,11 @@ class Track:
     genre: str
     cover_art: bytes     # populated during identification, empty until then
     musicbrainz_recording_id: str
+    musicbrainz_release_id: str
+    acoustid_score: float   # 0.0 = not set; used by benchmark/score to flag weak matches
 ```
 
-`album_artist` is the key to grouping feat. tracks correctly — `organize.py` uses it for the folder, falling back to `artist` when empty.
+All fields except `path` have empty/zero defaults. `album_artist` is used for folder grouping, falling back to `artist` when empty.
 
 ### Identification strategy (`identify.py` + `shazam.py`)
 
@@ -86,6 +111,29 @@ class Track:
 ### HTTP caching (`cache.py`)
 
 `fetch_url(url)` is an `lru_cache(maxsize=256)` wrapper around `requests.get`. Used by both `shazam.py` (cover art, iTunes lookup) and `tag.py` (MusicBrainz Cover Art Archive). Deduplicates fetches for the same URL across concurrent threads — critical for albums where all tracks share the same cover art URL.
+
+### Evaluation & benchmarking
+
+Two distinct workflows for measuring identification accuracy:
+
+**`evaluate` command** (`evaluate.py` + `score.py`) — runs against raw WAV files, no conversion performed:
+- `evaluate_track()` fingerprints the WAV directly via `identify()` and optionally runs Shazam
+- `score_report()` aggregates `EvalResult` lists into a JSON report with per-record breakdowns, field coverage, AcoustID score distribution, Shazam cross-agreement, iPod-weighted quality scores, and recommendations
+- `eval/records.yaml` provides optional `known_albums` ground truth for album accuracy measurement
+- WAV naming convention `TRK<X>~<N>.WAV` groups tracks by record index (`parse_record_index()`)
+
+**Integration tests** (`tests/integration/`) — live AcoustID + MusicBrainz accuracy tests, no audio files committed:
+- Fixtures in `tests/integration/fixtures/fingerprints.json` store real chromaprint fingerprint strings (captured via `capture.py`) with ground-truth expected metadata
+- `test_acoustid.py` injects stored fingerprints via `acoustid.fingerprint_file` mock, suppresses Shazam, and hits the real AcoustID + MusicBrainz APIs
+- Reports a field-level accuracy score (title/artist/album/year) across all fixtures; the test passes when `passed_checks / total_checks >= threshold`
+- Threshold is configured in `pyproject.toml` under `[tool.music-manager] integration_accuracy_threshold` and overridable via `ACOUSTID_ACCURACY_THRESHOLD` env var — raise it as pipeline accuracy improves, never lower it to make tests pass
+- `_duration_diff_s` is also mocked using each fixture's `duration_ms` so the MusicBrainz recording tiebreaker works without a real file on disk
+- `capture.py` is a CLI helper: fingerprints a real audio file and appends an entry to the fixtures JSON
+
+**`benchmark` command** (`benchmark.py`) — runs against an already-organized m4a library (e.g. `~/personal_rips`):
+- Uses embedded m4a tags as ground truth (`read_ground_truth()`)
+- `_field_match()` uses fuzzy similarity with edition/feat. normalization to handle variant album names
+- Reports perfect-match %, per-field match %, per-album breakdown, and sorted failure list
 
 ### Key behaviours
 
@@ -104,6 +152,7 @@ class Track:
 | `shazamio` | Shazam recognition (async) |
 | `mutagen` | MP4 tag reading/writing |
 | `requests` | HTTP (cover art, iTunes, MusicBrainz) |
+| `rich` | Live CLI progress display |
 | `demucs` | Stem separation (optional extra, not yet wired) |
 | `click` | CLI |
 

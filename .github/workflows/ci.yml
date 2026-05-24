@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y ffmpeg
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run unit tests
+        run: uv run pytest tests/ --ignore=tests/integration -v
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    # Only run on pushes to main — PRs don't have the secret and hit real APIs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y ffmpeg
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run AcoustID accuracy test
+        env:
+          ACOUSTID_API_KEY: ${{ secrets.ACOUSTID_API_KEY }}
+        run: uv run pytest tests/integration/ -m integration -v -s
