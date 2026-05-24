@@ -15,3 +15,4 @@ class Track:
     cover_art: bytes = field(default=b"", repr=False)
     musicbrainz_recording_id: str = ""
     musicbrainz_release_id: str = ""
+    acoustid_score: float = 0.0

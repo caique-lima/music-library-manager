@@ -33,3 +33,9 @@ packages = ["src/music_manager"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "beets>=2.11.0",
+    "shazamio>=0.8.1",
+]
