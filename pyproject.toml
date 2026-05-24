@@ -38,9 +38,10 @@ markers = [
 ]
 
 [tool.music-manager]
-# Minimum fraction of field checks (title/artist/album/year) that must pass
-# across all integration fixtures. Raise this as pipeline accuracy improves.
+# Minimum fraction of field checks that must pass across all fixtures.
+# Raise these as pipeline accuracy improves — never lower to force a pass.
 integration_accuracy_threshold = 0.80
+shazam_accuracy_threshold = 0.80
 
 [dependency-groups]
 dev = [

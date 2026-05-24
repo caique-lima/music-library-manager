@@ -1,0 +1,12 @@
+[
+  {
+    "name": "kevin_macleod_sneaky_snitch",
+    "description": "CC-BY Kevin MacLeod track — verifies Shazam recognition and iTunes metadata enrichment",
+    "audio_file": "audio/kevin_macleod_sneaky_snitch.m4a",
+    "attribution": "Sneaky Snitch by Kevin MacLeod (incompetech.com) — Licensed under CC BY 4.0: https://creativecommons.org/licenses/by/4.0/",
+    "expected": {
+      "title": "Sneaky Snitch",
+      "artist": "Kevin MacLeod"
+    }
+  }
+]
