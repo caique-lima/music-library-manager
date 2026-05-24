@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from music_manager.benchmark import _field_match
+from music_manager.identify import identify
 from music_manager.shazam import identify_via_shazam
 
 _FIXTURES_PATH = Path(__file__).parent / "fixtures" / "shazam_fixtures.json"
@@ -35,6 +36,29 @@ def _field_checks(track, exp: dict) -> list[tuple[str, bool, str, str]]:
         want = exp["album"]
         checks.append(("album", bool(got) and _field_match(got, want), got, want))
     return checks
+
+
+@pytest.mark.integration
+def test_identify_shazam_fallback_pipeline():
+    """identify() with no AcoustID key must produce a fully-populated Track via Shazam.
+
+    Exercises the path: identify() → identify_via_shazam() → iTunes lookup → cover art fetch.
+    Verifies the structural guarantees that identify() is responsible for (album_artist always
+    set, cover_art populated) in addition to the basic title/artist accuracy.
+    """
+    audio_path = _AUDIO_ROOT / "audio/kevin_macleod_sneaky_snitch.m4a"
+
+    track = identify(audio_path)  # no acoustid_api_key → Shazam is primary
+
+    assert track.title, "title must be populated"
+    assert _field_match(track.title, "Sneaky Snitch"), f"title: {track.title!r}"
+    assert _field_match(track.artist, "Kevin MacLeod"), f"artist: {track.artist!r}"
+
+    # Structural guarantees that identify() is responsible for:
+    assert track.album_artist, (
+        "album_artist must always be set by identify() — used for folder grouping on iPod"
+    )
+    assert track.cover_art, "cover_art must be fetched (Shazam provides artwork URL)"
 
 
 @pytest.mark.integration
