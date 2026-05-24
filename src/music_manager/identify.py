@@ -325,7 +325,14 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         recordings = best.get("recordings", [])
         if not recordings:
             return None
-        recording = recordings[0]
+        # Prefer a recording whose AcoustID data already includes a studio
+        # album release — avoids picking a remix/single recording when the
+        # canonical album version appears later in the list.
+        recording = next(
+            (rec for rec in recordings
+             if any(_is_studio_album(r) for r in rec.get("releases", []))),
+            recordings[0],
+        )
 
         mb_id = recording.get("id", "")
         title = recording.get("title", "")
@@ -333,10 +340,11 @@ def lookup_musicbrainz(path: Path, acoustid_api_key: str) -> "Track | None":
         releases = recording.get("releases", [])
         album_releases = [r for r in releases if _is_studio_album(r)]
 
-        # AcoustID's compact response truncates release lists (typically ≤5 results),
-        # so studio albums are often absent when the recording has many singles/EPs.
-        # Fall back to a full MusicBrainz lookup to get the complete release list.
-        if not album_releases and mb_id:
+        # Always fetch the full MusicBrainz release list — AcoustID's compact
+        # response truncates to ≤5 releases per recording and commonly omits
+        # the canonical studio album (e.g. returns a single when the album
+        # version exists on MusicBrainz).
+        if mb_id:
             mb_track = _fetch_from_musicbrainz(mb_id, path)
             if mb_track:
                 mb_track.acoustid_score = acoustid_score
